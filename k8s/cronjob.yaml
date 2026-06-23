@@ -1,0 +1,55 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: aws-cost-optimizer
+  namespace: default
+spec:
+  # Run daily at 2:00 AM UTC
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: aws-cost-optimizer
+        spec:
+          serviceAccountName: cost-optimizer-sa
+          restartPolicy: OnFailure
+          containers:
+            - name: cost-optimizer
+              # Pinned/custom build of the Python application
+              image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/aws-cost-optimizer:v1.0.0
+              imagePullPolicy: IfNotPresent
+              command: ["python", "lambda/handler.py"]
+              env:
+                - name: DRY_RUN
+                  value: "true" # Keep dry-run on by default for safety
+                - name: AWS_DEFAULT_REGION
+                  value: "us-east-1"
+                - name: S3_BUCKET_NAME
+                  value: "aws-cost-optimization-reports-123456789012"
+                - name: SNS_TOPIC_ARN
+                  value: "arn:aws:sns:us-east-1:123456789012:aws-cost-optimization-alerts"
+                # Thresholds customization
+                - name: EC2_CPU_THRESHOLD
+                  value: "5.0"
+                - name: EC2_IDLE_HOURS
+                  value: "72"
+                - name: RDS_CONNECTION_THRESHOLD
+                  value: "0"
+                - name: RDS_IDLE_HOURS
+                  value: "48"
+                - name: K8S_REQUESTS_THRESHOLD
+                  value: "0"
+                - name: K8S_IDLE_HOURS
+                  value: "24"
+              resources:
+                limits:
+                  cpu: "200m"
+                  memory: "256Mi"
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
