@@ -164,13 +164,15 @@ def test_report_generation_and_upload(aws_credentials):
     assert summary['total_savings'] == 30.00
     assert summary['total_resources'] == 1
     assert bucket_name in summary['s3_html_url']
+    assert bucket_name in summary['s3_csv_url']
     
     # Check if files exist in the S3 bucket
     objects = s3_client.list_objects_v2(Bucket=bucket_name)
     keys = [obj['Key'] for obj in objects.get('Contents', [])]
-    assert len(keys) == 2  # one JSON and one HTML
+    assert len(keys) == 3  # one JSON, one HTML, and one CSV
     assert any(k.endswith('.html') for k in keys)
     assert any(k.endswith('.json') for k in keys)
+    assert any(k.endswith('.csv') for k in keys)
 
 
 @mock_aws
