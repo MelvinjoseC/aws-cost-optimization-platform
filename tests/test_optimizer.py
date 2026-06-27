@@ -18,6 +18,7 @@ from src.detectors.ec2_detector import detect_idle_ec2_instances
 from src.detectors.rds_detector import detect_idle_rds_instances
 from src.detectors.ebs_detector import detect_unattached_ebs_volumes
 from src.detectors.eip_detector import detect_unused_eips
+from src.detectors.elb_detector import detect_idle_elb_instances
 from src.actions.stop_ec2 import stop_ec2_instances
 from src.actions.stop_rds import stop_rds_instances
 from src.reports.generator import generate_reports
@@ -190,3 +191,49 @@ def test_sns_notification(aws_credentials):
     
     success = send_sns_notification(report_summary, dry_run=True)
     assert success is True
+
+
+@mock_aws
+def test_detect_idle_elb(aws_credentials):
+    """Test ELB detector finds idle load balancers and filters appropriately."""
+    elbv2_client = boto3.client('elbv2', region_name='us-east-1')
+    cw_client = boto3.client('cloudwatch', region_name='us-east-1')
+    
+    # Create a mock VPC and Subnets to satisfy create_load_balancer requirement
+    ec2_client = boto3.client('ec2', region_name='us-east-1')
+    vpc = ec2_client.create_vpc(CidrBlock='172.28.7.0/24')
+    subnet1 = ec2_client.create_subnet(VpcId=vpc['Vpc']['VpcId'], CidrBlock='172.28.7.0/26', AvailabilityZone='us-east-1a')
+    subnet2 = ec2_client.create_subnet(VpcId=vpc['Vpc']['VpcId'], CidrBlock='172.28.7.64/26', AvailabilityZone='us-east-1b')
+    
+    # Create a mock Application Load Balancer
+    lb = elbv2_client.create_load_balancer(
+        Name='test-alb',
+        Subnets=[subnet1['Subnet']['SubnetId'], subnet2['Subnet']['SubnetId']],
+        Type='application'
+    )
+    lb_arn = lb['LoadBalancers'][0]['LoadBalancerArn']
+    
+    # CloudWatch Dimension expects suffix part of the ARN
+    arn_parts = lb_arn.split(':loadbalancer/')
+    lb_dimension = arn_parts[1]
+    
+    # Put CloudWatch metrics indicating 0 requests
+    cw_client.put_metric_data(
+        Namespace='AWS/ApplicationELB',
+        MetricData=[
+            {
+                'MetricName': 'RequestCount',
+                'Dimensions': [{'Name': 'LoadBalancer', 'Value': lb_dimension}],
+                'Value': 0.0,
+                'Unit': 'Count'
+            }
+        ]
+    )
+    
+    # Run detector
+    idle_elbs = detect_idle_elb_instances()
+    
+    assert len(idle_elbs) == 1
+    assert idle_elbs[0]['resource_id'] == lb_arn
+    assert idle_elbs[0]['resource_type'] == 'ELB'
+    assert idle_elbs[0]['estimated_monthly_savings'] == 16.20

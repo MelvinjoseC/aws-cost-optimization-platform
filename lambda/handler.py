@@ -10,6 +10,7 @@ from src.detectors.rds_detector import detect_idle_rds_instances
 from src.detectors.ebs_detector import detect_unattached_ebs_volumes
 from src.detectors.eip_detector import detect_unused_eips
 from src.detectors.k8s_detector import detect_idle_k8s_deployments
+from src.detectors.elb_detector import detect_idle_elb_instances
 from src.actions.stop_ec2 import stop_ec2_instances
 from src.actions.stop_rds import stop_rds_instances
 from src.actions.scale_down import scale_down_k8s_deployments
@@ -82,6 +83,13 @@ def main_handler(event: dict, context) -> dict:
     except Exception as e:
         logger.error(f"Failed to scan Kubernetes: {e}")
         k8s_resources = []
+
+    # Load Balancers
+    try:
+        elb_resources = detect_idle_elb_instances()
+        all_detected_resources.extend(elb_resources)
+    except Exception as e:
+        logger.error(f"Failed to scan Load Balancers: {e}")
 
     logger.info(f"Scanning complete. Total idle resources found: {len(all_detected_resources)}")
 
