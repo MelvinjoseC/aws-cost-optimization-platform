@@ -38,6 +38,7 @@ The **AWS Cost Optimization Platform** is an automated, production-grade DevOps 
    * **EC2**: Average CPU utilization < 5% for 72 hours via CloudWatch.
    * **RDS**: Maximum database connection count = 0 for 48 hours.
    * **Kubernetes Deployments**: HPAs reporting 0 requests/traffic for 24 hours.
+   * **Load Balancers**: Application & Classic LBs with 0 requests for 7 days (168 hours).
    * **Storage & Networking**: Unattached EBS volumes and unassociated Elastic IPs.
 2. **Automated Remediations (Scale-Down)**:
    * Stop idle EC2 instances (with `CostOptimizerOptOut=true` tag override).
@@ -70,6 +71,7 @@ The platform runs in **Dry-Run** mode by default (`DRY_RUN=true`). In dry-run mo
 | `RDS_IDLE_HOURS` | `48` | The timeframe in hours to verify connection counts for RDS. |
 | `K8S_REQUESTS_THRESHOLD` | `0` | Requests rate threshold below which deployment is flagged as idle. |
 | `K8S_IDLE_HOURS` | `24` | The timeframe in hours to verify request counts for Kubernetes. |
+| `ELB_IDLE_HOURS` | `168` | The timeframe in hours to verify request counts for Load Balancers. |
 
 ## Local Setup & Development
 
