@@ -214,12 +214,31 @@ def generate_reports(resources: list, dry_run: bool) -> dict:
     # 2. Convert JSON report
     json_content = json.dumps(report_data, indent=2, default=str)
     
+    # 3. Convert CSV report
+    import csv
+    import io
+    csv_buffer = io.StringIO()
+    csv_writer = csv.writer(csv_buffer)
+    csv_writer.writerow(["ResourceType", "ResourceID", "Name", "EstimatedMonthlySavings", "Details"])
+    for res in resources:
+        details_str = "; ".join(f"{k}={v}" for k, v in res.get("details", {}).items())
+        csv_writer.writerow([
+            res.get("resource_type"),
+            res.get("resource_id"),
+            res.get("name"),
+            res.get("estimated_monthly_savings"),
+            details_str
+        ])
+    csv_content = csv_buffer.getvalue()
+    
     s3_bucket = os.environ.get("S3_BUCKET_NAME")
     s3_json_key = f"reports/{now.year}/{now.month:02d}/{now.day:02d}/report_{date_str}.json"
     s3_html_key = f"reports/{now.year}/{now.month:02d}/{now.day:02d}/report_{date_str}.html"
+    s3_csv_key = f"reports/{now.year}/{now.month:02d}/{now.day:02d}/report_{date_str}.csv"
     
     s3_json_url = None
     s3_html_url = None
+    s3_csv_url = None
     
     if s3_bucket:
         s3_client = get_aws_client('s3')
@@ -242,6 +261,15 @@ def generate_reports(resources: list, dry_run: bool) -> dict:
             )
             s3_html_url = f"https://{s3_bucket}.s3.amazonaws.com/{s3_html_key}"
             
+            logger.info(f"Uploading CSV report to s3://{s3_bucket}/{s3_csv_key}")
+            s3_client.put_object(
+                Bucket=s3_bucket,
+                Key=s3_csv_key,
+                Body=csv_content,
+                ContentType='text/csv'
+            )
+            s3_csv_url = f"https://{s3_bucket}.s3.amazonaws.com/{s3_csv_key}"
+            
             logger.info("Successfully uploaded reports to S3.")
         except ClientError as e:
             logger.error(f"Failed to upload reports to S3 bucket {s3_bucket}: {e}")
@@ -252,21 +280,26 @@ def generate_reports(resources: list, dry_run: bool) -> dict:
         local_dir = "/tmp" if os.name != 'nt' else os.environ.get('TEMP', '.')
         local_json = os.path.join(local_dir, f"report_{date_str}.json")
         local_html = os.path.join(local_dir, f"report_{date_str}.html")
+        local_csv = os.path.join(local_dir, f"report_{date_str}.csv")
         try:
             with open(local_json, 'w') as f:
                 f.write(json_content)
             with open(local_html, 'w') as f:
                 f.write(html_content)
-            logger.info(f"Saved reports locally: {local_json}, {local_html}")
+            with open(local_csv, 'w', newline='', encoding='utf-8') as f:
+                f.write(csv_content)
+            logger.info(f"Saved reports locally: {local_json}, {local_html}, {local_csv}")
             s3_json_url = local_json
             s3_html_url = local_html
+            s3_csv_url = local_csv
         except Exception as e:
             logger.error(f"Could not save reports locally: {e}")
-
+ 
     return {
         "total_savings": round(total_savings, 2),
         "total_resources": total_resources,
         "s3_json_url": s3_json_url,
         "s3_html_url": s3_html_url,
+        "s3_csv_url": s3_csv_url,
         "report_date": date_str
     }
