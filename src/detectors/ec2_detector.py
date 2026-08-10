@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timedelta, timezone
 from botocore.exceptions import ClientError
-from src.utils.aws_client import get_aws_client
+from src.utils.aws_client import get_aws_client, get_target_regions
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -67,68 +67,75 @@ def detect_idle_ec2_instances() -> list:
     """
     Scans for EC2 instances running with CPU < threshold (default 5%) for the last 72 hours.
     Excludes instances with opt-out tag: CostOptimizerOptOut=true.
+    Supports multi-region scanning.
     """
     logger.info("Starting idle EC2 instance detection...")
-    
-    ec2_client = get_aws_client('ec2')
-    cw_client = get_aws_client('cloudwatch')
     
     cpu_threshold = float(os.environ.get("EC2_CPU_THRESHOLD", 5.0))
     idle_hours = int(os.environ.get("EC2_IDLE_HOURS", 72))
     
     idle_instances = []
+    target_regions = get_target_regions()
     
-    try:
-        paginator = ec2_client.get_paginator('describe_instances')
-        # Only check running instances
-        pages = paginator.paginate(
-            Filters=[
-                {'Name': 'instance-state-name', 'Values': ['running']}
-            ]
-        )
+    for region in target_regions:
+        logger.info(f"Scanning EC2 instances in region: {region}")
+        ec2_client = get_aws_client('ec2', region_name=region)
+        cw_client = get_aws_client('cloudwatch', region_name=region)
         
-        for page in pages:
-            for reservation in page.get('Reservations', []):
-                for instance in reservation.get('Instances', []):
-                    instance_id = instance.get('InstanceId')
-                    instance_type = instance.get('InstanceType')
-                    tags = instance.get('Tags', [])
-                    
-                    # Convert tag list to dict
-                    tag_dict = {tag['Key']: tag['Value'] for tag in tags}
-                    
-                    # Check for opt-out tag
-                    if tag_dict.get('CostOptimizerOptOut') == 'true':
-                        logger.info(f"EC2 instance {instance_id} opted out of auto-stopping via tag.")
-                        continue
+        try:
+            paginator = ec2_client.get_paginator('describe_instances')
+            # Only check running instances
+            pages = paginator.paginate(
+                Filters=[
+                    {'Name': 'instance-state-name', 'Values': ['running']}
+                ]
+            )
+            
+            for page in pages:
+                for reservation in page.get('Reservations', []):
+                    for instance in reservation.get('Instances', []):
+                        instance_id = instance.get('InstanceId')
+                        instance_type = instance.get('InstanceType')
+                        tags = instance.get('Tags', [])
                         
-                    name = tag_dict.get('Name', 'Unnamed')
-                    
-                    # Check CPU metrics
-                    if is_instance_idle(ec2_client, cw_client, instance_id, cpu_threshold, idle_hours):
-                        monthly_savings = get_estimated_monthly_savings(instance_type)
+                        # Convert tag list to dict
+                        tag_dict = {tag['Key']: tag['Value'] for tag in tags}
                         
-                        logger.info(
-                            f"Detected Idle EC2 Instance: ID={instance_id}, Name={name}, "
-                            f"Type={instance_type}, Estimated Savings=${monthly_savings}/mo"
-                        )
+                        # Check for opt-out tag
+                        if tag_dict.get('CostOptimizerOptOut') == 'true':
+                            logger.info(f"EC2 instance {instance_id} opted out of auto-stopping via tag.")
+                            continue
+                            
+                        name = tag_dict.get('Name', 'Unnamed')
                         
-                        idle_instances.append({
-                            'resource_id': instance_id,
-                            'resource_type': 'EC2',
-                            'name': name,
-                            'details': {
-                                'instance_type': instance_type,
-                                'launch_time': instance.get('LaunchTime').isoformat(),
-                                'state': instance.get('State', {}).get('Name')
-                            },
-                            'estimated_monthly_savings': monthly_savings,
-                            'opt_out_tag': False
-                        })
-                        
-    except ClientError as e:
-        logger.error(f"Error describing EC2 instances: {e}")
-        raise e
-        
-    logger.info(f"EC2 scanning completed. Found {len(idle_instances)} idle instances.")
+                        # Check CPU metrics
+                        if is_instance_idle(ec2_client, cw_client, instance_id, cpu_threshold, idle_hours):
+                            monthly_savings = get_estimated_monthly_savings(instance_type)
+                            
+                            logger.info(
+                                f"[{region}] Detected Idle EC2 Instance: ID={instance_id}, Name={name}, "
+                                f"Type={instance_type}, Estimated Savings=${monthly_savings}/mo"
+                            )
+                            
+                            idle_instances.append({
+                                'resource_id': instance_id,
+                                'resource_type': 'EC2',
+                                'name': name,
+                                'details': {
+                                    'region': region,
+                                    'instance_type': instance_type,
+                                    'launch_time': instance.get('LaunchTime').isoformat(),
+                                    'state': instance.get('State', {}).get('Name')
+                                },
+                                'estimated_monthly_savings': monthly_savings,
+                                'opt_out_tag': False
+                            })
+                            
+        except ClientError as e:
+            logger.error(f"Error describing EC2 instances in region {region}: {e}")
+            # Continue scanning other regions even if one fails
+            continue
+            
+    logger.info(f"EC2 scanning completed. Found {len(idle_instances)} idle instances across all targeted regions.")
     return idle_instances
+
