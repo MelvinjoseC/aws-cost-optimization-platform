@@ -31,17 +31,23 @@ class AWSClientManager:
             self._session = boto3.Session(region_name=region)
         return self._session
 
-    def get_client(self, service_name: str) -> Any:
+    def get_client(self, service_name: str, region_name: Optional[str] = None) -> Any:
         """
-        Retrieves or creates a boto3 client with standard retry configuration.
+        Retrieves or creates a boto3 client with standard retry configuration,
+        scoped to a specific region.
 
         Args:
             service_name (str): The AWS service name (e.g. 'ec2', 'rds').
+            region_name (Optional[str]): The AWS region name. If not specified,
+                                         defaults to the environment region.
 
         Returns:
             Any: The configured boto3 client instance.
         """
-        if service_name not in self._clients:
+        target_region: str = region_name or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        cache_key: str = f"{target_region}:{service_name}"
+        
+        if cache_key not in self._clients:
             session: boto3.Session = self._get_session()
             # Production-realistic retry config for boto3 clients
             config: Config = Config(
@@ -50,21 +56,23 @@ class AWSClientManager:
                     'mode': 'standard'
                 }
             )
-            self._clients[service_name] = session.client(service_name, config=config)
-        return self._clients[service_name]
+            self._clients[cache_key] = session.client(service_name, region_name=target_region, config=config)
+        return self._clients[cache_key]
 
 # Global manager instance
 aws_manager: AWSClientManager = AWSClientManager()
 
-def get_aws_client(service_name: str) -> Any:
+def get_aws_client(service_name: str, region_name: Optional[str] = None) -> Any:
     """
     Helper function to get an AWS service client from the global manager instance.
 
     Args:
         service_name (str): The name of the AWS service.
+        region_name (Optional[str]): Optional AWS region name.
 
     Returns:
         Any: The boto3 client.
     """
-    return aws_manager.get_client(service_name)
+    return aws_manager.get_client(service_name, region_name=region_name)
+
 
