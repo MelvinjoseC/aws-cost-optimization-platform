@@ -57,12 +57,25 @@ resource "aws_s3_bucket_public_access_block" "reports_security" {
   restrict_public_buckets = true
 }
 
+# --- KMS Key for Encryption ---
+resource "aws_kms_key" "kms_key" {
+  description             = "KMS Customer Managed Key for S3 and SNS encryption in Cost Optimizer"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+}
+
+resource "aws_kms_alias" "kms_key_alias" {
+  name          = "alias/${var.project_name}-key"
+  target_key_id = aws_kms_key.kms_key.key_id
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "reports_encryption" {
   bucket = aws_s3_bucket.reports.id
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      kms_master_key_id = aws_kms_key.kms_key.arn
+      sse_algorithm     = "aws:kms"
     }
   }
 }
@@ -95,7 +108,8 @@ resource "aws_s3_bucket_policy" "reports_policy" {
 
 # --- SNS Topic for Alert Notifications ---
 resource "aws_sns_topic" "alerts" {
-  name = "${var.project_name}-alerts"
+  name              = "${var.project_name}-alerts"
+  kms_master_key_id = aws_kms_key.kms_key.id
 }
 
 resource "aws_sns_topic_subscription" "email" {
@@ -104,3 +118,4 @@ resource "aws_sns_topic_subscription" "email" {
   protocol  = "email"
   endpoint  = var.sns_alert_email
 }
+
