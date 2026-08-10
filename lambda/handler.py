@@ -2,7 +2,7 @@ import os
 import sys
 
 # Ensure the parent directory is in python path so that src.* imports work inside Lambda
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.utils.logger import get_logger
 from src.detectors.ec2_detector import detect_idle_ec2_instances
@@ -27,27 +27,27 @@ def main_handler(event: dict, context) -> dict:
     AWS Lambda entrypoint. Coordinates scanning, actions, report generation, and notifications.
     """
     logger.info("Starting AWS Cost Optimization Platform run...")
-    
+
     # 1. Determine execution mode (Dry Run / Active Execution)
     # Event parameter overrides the DRY_RUN environment variable
     dry_run_env = os.environ.get("DRY_RUN", "true").lower() == "true"
-    
-    if event and 'dry_run' in event:
-        dry_run = str(event.get('dry_run')).lower() == 'true'
+
+    if event and "dry_run" in event:
+        dry_run = str(event.get("dry_run")).lower() == "true"
         logger.info(f"Dry-run mode overridden by event payload: {dry_run}")
-    elif event and 'DRY_RUN' in event:
-        dry_run = str(event.get('DRY_RUN')).lower() == 'true'
+    elif event and "DRY_RUN" in event:
+        dry_run = str(event.get("DRY_RUN")).lower() == "true"
         logger.info(f"Dry-run mode overridden by event payload: {dry_run}")
     else:
         dry_run = dry_run_env
         logger.info(f"Dry-run mode loaded from environment: {dry_run}")
-        
+
     # Sync environmental variable so child functions inherit overridden event values
     os.environ["DRY_RUN"] = str(dry_run).lower()
 
     # 2. Run Resource Detectors
     all_detected_resources = []
-    
+
     # EC2
     try:
         ec2_resources = detect_idle_ec2_instances()
@@ -55,7 +55,7 @@ def main_handler(event: dict, context) -> dict:
     except Exception as e:
         logger.error(f"Failed to scan EC2: {e}")
         ec2_resources = []
-        
+
     # RDS
     try:
         rds_resources = detect_idle_rds_instances()
@@ -63,21 +63,21 @@ def main_handler(event: dict, context) -> dict:
     except Exception as e:
         logger.error(f"Failed to scan RDS: {e}")
         rds_resources = []
-        
+
     # EBS
     try:
         ebs_resources = detect_unattached_ebs_volumes()
         all_detected_resources.extend(ebs_resources)
     except Exception as e:
         logger.error(f"Failed to scan EBS: {e}")
-        
+
     # Elastic IPs
     try:
         eip_resources = detect_unused_eips()
         all_detected_resources.extend(eip_resources)
     except Exception as e:
         logger.error(f"Failed to scan Elastic IPs: {e}")
-        
+
     # Kubernetes Deployments
     try:
         k8s_resources = detect_idle_k8s_deployments()
@@ -93,7 +93,9 @@ def main_handler(event: dict, context) -> dict:
     except Exception as e:
         logger.error(f"Failed to scan Load Balancers: {e}")
 
-    logger.info(f"Scanning complete. Total idle resources found: {len(all_detected_resources)}")
+    logger.info(
+        f"Scanning complete. Total idle resources found: {len(all_detected_resources)}"
+    )
 
     # 3. Perform Actions if not dry run
     remediated_ec2 = []
@@ -101,19 +103,19 @@ def main_handler(event: dict, context) -> dict:
     remediated_k8s = []
     remediated_ebs = []
     remediated_eip = []
-    
+
     if not dry_run:
         logger.info("Executing active scale-down/stopping remediation actions...")
-        
+
         # Stop EC2 instances
-        ec2_ids_to_stop = [res['resource_id'] for res in ec2_resources]
+        ec2_ids_to_stop = [res["resource_id"] for res in ec2_resources]
         if ec2_ids_to_stop:
             remediated_ec2 = stop_ec2_instances(ec2_ids_to_stop)
-            
+
         # Snapshot & Stop RDS instances
         if rds_resources:
             remediated_rds = stop_rds_instances(rds_resources)
-            
+
         # Scale-down Kubernetes deployments
         if k8s_resources:
             remediated_k8s = scale_down_k8s_deployments(k8s_resources)
@@ -124,7 +126,9 @@ def main_handler(event: dict, context) -> dict:
             remediated_ebs = delete_unattached_ebs_volumes(ebs_resources)
 
         # Release unassociated Elastic IPs
-        release_eip_flag = os.environ.get("RELEASE_UNUSED_EIP", "false").lower() == "true"
+        release_eip_flag = (
+            os.environ.get("RELEASE_UNUSED_EIP", "false").lower() == "true"
+        )
         if release_eip_flag and eip_resources:
             remediated_eip = release_unused_eips(eip_resources)
     else:
@@ -157,11 +161,11 @@ def main_handler(event: dict, context) -> dict:
                 "rds": remediated_rds,
                 "kubernetes_deployments": remediated_k8s,
                 "ebs_volumes": remediated_ebs,
-                "elastic_ips": remediated_eip
+                "elastic_ips": remediated_eip,
             },
             "s3_html_report": report_summary.get("s3_html_url"),
-            "s3_json_report": report_summary.get("s3_json_url")
-        }
+            "s3_json_report": report_summary.get("s3_json_url"),
+        },
     }
 
 
@@ -172,4 +176,5 @@ if __name__ == "__main__":
     response = main_handler({"dry_run": True}, None)
     print("Execution output:")
     import pprint
+
     pprint.pprint(response)

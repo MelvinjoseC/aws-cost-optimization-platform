@@ -6,14 +6,16 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class AWSClientManager:
     """
     Manager for AWS clients to reuse sessions and clients.
-    
+
     This class implements a thread-safe-like cache for boto3 sessions and clients,
     ensuring configurations such as retries are uniformly configured across
     all API invocations.
     """
+
     def __init__(self) -> None:
         self._session: Optional[boto3.Session] = None
         self._clients: Dict[str, Any] = {}
@@ -44,23 +46,24 @@ class AWSClientManager:
         Returns:
             Any: The configured boto3 client instance.
         """
-        target_region: str = region_name or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        target_region: str = region_name or os.environ.get(
+            "AWS_DEFAULT_REGION", "us-east-1"
+        )
         cache_key: str = f"{target_region}:{service_name}"
-        
+
         if cache_key not in self._clients:
             session: boto3.Session = self._get_session()
             # Production-realistic retry config for boto3 clients
-            config: Config = Config(
-                retries={
-                    'max_attempts': 5,
-                    'mode': 'standard'
-                }
+            config: Config = Config(retries={"max_attempts": 5, "mode": "standard"})
+            self._clients[cache_key] = session.client(
+                service_name, region_name=target_region, config=config
             )
-            self._clients[cache_key] = session.client(service_name, region_name=target_region, config=config)
         return self._clients[cache_key]
+
 
 # Global manager instance
 aws_manager: AWSClientManager = AWSClientManager()
+
 
 def get_aws_client(service_name: str, region_name: Optional[str] = None) -> Any:
     """
@@ -76,3 +79,17 @@ def get_aws_client(service_name: str, region_name: Optional[str] = None) -> Any:
     return aws_manager.get_client(service_name, region_name=region_name)
 
 
+def get_target_regions() -> list:
+    """
+    Retrieves the list of target AWS regions to scan.
+
+    Parses a comma-separated list from the 'AWS_REGIONS' environment variable.
+    Falls back to 'AWS_DEFAULT_REGION' if 'AWS_REGIONS' is not configured.
+
+    Returns:
+        list: A list of region names as strings.
+    """
+    regions_str: str = os.environ.get("AWS_REGIONS", "").strip()
+    if regions_str:
+        return [r.strip() for r in regions_str.split(",") if r.strip()]
+    return [os.environ.get("AWS_DEFAULT_REGION", "us-east-1")]

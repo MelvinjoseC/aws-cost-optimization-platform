@@ -7,10 +7,11 @@ logger = get_logger(__name__)
 # Global flag to track Kubernetes client configuration initialization
 _K8S_INITIALIZED: bool = False
 
+
 def initialize_k8s_client() -> bool:
     """
     Initializes the Kubernetes client configuration.
-    
+
     Attempts to load the in-cluster configuration first. If running outside the
     cluster, falls back to the local kubeconfig (respecting the custom path defined
     by the KUBECONFIG environment variable, if set).
@@ -44,6 +45,7 @@ def initialize_k8s_client() -> bool:
             logger.error(f"Failed to load local kubeconfig: {e}")
             return False
 
+
 def get_apps_v1_api() -> client.AppsV1Api:
     """
     Returns an initialized AppsV1Api client instance.
@@ -58,6 +60,7 @@ def get_apps_v1_api() -> client.AppsV1Api:
         return client.AppsV1Api()
     raise RuntimeError("Kubernetes client API could not be initialized.")
 
+
 def get_custom_objects_api() -> client.CustomObjectsApi:
     """
     Returns an initialized CustomObjectsApi client instance.
@@ -71,4 +74,3 @@ def get_custom_objects_api() -> client.CustomObjectsApi:
     if initialize_k8s_client():
         return client.CustomObjectsApi()
     raise RuntimeError("Kubernetes client CustomObjectsApi could not be initialized.")
-
