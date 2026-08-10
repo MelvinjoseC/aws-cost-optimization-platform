@@ -22,6 +22,7 @@ from src.detectors.elb_detector import detect_idle_elb_instances
 from src.actions.stop_ec2 import stop_ec2_instances
 from src.actions.stop_rds import stop_rds_instances
 from src.actions.delete_ebs import delete_unattached_ebs_volumes
+from src.actions.release_eip import release_unused_eips
 from src.reports.generator import generate_reports
 from src.reports.notifier import send_sns_notification
 
@@ -274,4 +275,36 @@ def test_delete_ebs(aws_credentials):
     # moto deletes it immediately, so describe_volumes should throw ClientError
     with pytest.raises(Exception):
         ec2_client.describe_volumes(VolumeIds=[volume_id])
+
+@mock_aws
+def test_release_eip(aws_credentials):
+    """Test EIP release action releases address in real run."""
+    ec2_client = boto3.client('ec2', region_name='us-east-1')
+    allocation = ec2_client.allocate_address(Domain='vpc')
+    allocation_id = allocation['AllocationId']
+    public_ip = allocation['PublicIp']
+    
+    # 1. Run in dry-run mode (default)
+    os.environ["DRY_RUN"] = "true"
+    mock_eip_list = [{
+        'resource_id': allocation_id,
+        'details': {'region': 'us-east-1', 'public_ip': public_ip}
+    }]
+    released = release_unused_eips(mock_eip_list)
+    assert allocation_id in released
+    
+    # Verify address still exists since it was dry-run
+    addresses = ec2_client.describe_addresses(AllocationIds=[allocation_id])
+    assert len(addresses['Addresses']) == 1
+    
+    # 2. Run in active mode (DRY_RUN=false)
+    os.environ["DRY_RUN"] = "false"
+    released = release_unused_eips(mock_eip_list)
+    assert allocation_id in released
+    
+    # Verify address no longer exists
+    # moto releases it immediately, so describe_addresses should throw ClientError
+    with pytest.raises(Exception):
+        ec2_client.describe_addresses(AllocationIds=[allocation_id])
+
 
