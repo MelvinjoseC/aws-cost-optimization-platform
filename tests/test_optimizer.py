@@ -307,4 +307,41 @@ def test_release_eip(aws_credentials):
     with pytest.raises(Exception):
         ec2_client.describe_addresses(AllocationIds=[allocation_id])
 
+@mock_aws
+def test_multi_region_ec2_scan(aws_credentials):
+    """Test EC2 detector scans multiple regions specified in AWS_REGIONS."""
+    # Configure multiple regions to scan
+    os.environ["AWS_REGIONS"] = "us-east-1,us-west-2"
+    
+    # 1. Create instances in us-east-1
+    ec2_e1 = boto3.client('ec2', region_name='us-east-1')
+    cw_e1 = boto3.client('cloudwatch', region_name='us-east-1')
+    res_e1 = ec2_e1.run_instances(ImageId='ami-12345678', MinCount=1, MaxCount=1, InstanceType='t3.micro')
+    inst_e1 = res_e1['Instances'][0]['InstanceId']
+    cw_e1.put_metric_data(
+        Namespace='AWS/EC2',
+        MetricData=[{'MetricName': 'CPUUtilization', 'Dimensions': [{'Name': 'InstanceId', 'Value': inst_e1}], 'Value': 1.0, 'Unit': 'Percent'}]
+    )
+    
+    # 2. Create instances in us-west-2
+    ec2_w2 = boto3.client('ec2', region_name='us-west-2')
+    cw_w2 = boto3.client('cloudwatch', region_name='us-west-2')
+    res_w2 = ec2_w2.run_instances(ImageId='ami-12345678', MinCount=1, MaxCount=1, InstanceType='t3.micro')
+    inst_w2 = res_w2['Instances'][0]['InstanceId']
+    cw_w2.put_metric_data(
+        Namespace='AWS/EC2',
+        MetricData=[{'MetricName': 'CPUUtilization', 'Dimensions': [{'Name': 'InstanceId', 'Value': inst_w2}], 'Value': 1.0, 'Unit': 'Percent'}]
+    )
+    
+    idle_instances = detect_idle_ec2_instances()
+    
+    # Clean up environment
+    if "AWS_REGIONS" in os.environ:
+        del os.environ["AWS_REGIONS"]
+        
+    assert len(idle_instances) == 2
+    regions = {inst['details']['region'] for inst in idle_instances}
+    assert regions == {"us-east-1", "us-west-2"}
+
+
 
