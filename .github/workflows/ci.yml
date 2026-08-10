@@ -32,6 +32,19 @@ jobs:
         # exit-zero treats all errors as warnings
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
+    - name: Run pylint static analysis
+      run: |
+        pip install pylint
+        # Disable convention and refactor checks to prevent minor stylistic errors from failing build
+        pylint --disable=C,R --errors-only src/ lambda/handler.py
+
+    - name: Run Checkov static analysis (Terraform/Kubernetes)
+      uses: bridgecrewio/checkov-action@master
+      with:
+        framework: terraform,kubernetes
+        soft_fail: true
+
     - name: Run unit tests with pytest
       run: |
-        pytest
+        python -m pytest
+
