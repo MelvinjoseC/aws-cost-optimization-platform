@@ -21,6 +21,7 @@ from src.detectors.eip_detector import detect_unused_eips
 from src.detectors.elb_detector import detect_idle_elb_instances
 from src.actions.stop_ec2 import stop_ec2_instances
 from src.actions.stop_rds import stop_rds_instances
+from src.actions.delete_ebs import delete_unattached_ebs_volumes
 from src.reports.generator import generate_reports
 from src.reports.notifier import send_sns_notification
 
@@ -239,3 +240,38 @@ def test_detect_idle_elb(aws_credentials):
     assert idle_elbs[0]['resource_id'] == lb_arn
     assert idle_elbs[0]['resource_type'] == 'ELB'
     assert idle_elbs[0]['estimated_monthly_savings'] == 16.20
+
+@mock_aws
+def test_delete_ebs(aws_credentials):
+    """Test EBS deletion action deletes volume in real run."""
+    ec2_client = boto3.client('ec2', region_name='us-east-1')
+    volume = ec2_client.create_volume(
+        AvailabilityZone='us-east-1a',
+        Size=10,
+        VolumeType='gp3'
+    )
+    volume_id = volume['VolumeId']
+    
+    # 1. Run in dry-run mode (default)
+    os.environ["DRY_RUN"] = "true"
+    mock_volume_list = [{
+        'resource_id': volume_id,
+        'details': {'region': 'us-east-1'}
+    }]
+    deleted = delete_unattached_ebs_volumes(mock_volume_list)
+    assert volume_id in deleted
+    
+    # Verify volume still exists since it was dry-run
+    vols = ec2_client.describe_volumes(VolumeIds=[volume_id])
+    assert len(vols['Volumes']) == 1
+    
+    # 2. Run in active mode (DRY_RUN=false)
+    os.environ["DRY_RUN"] = "false"
+    deleted = delete_unattached_ebs_volumes(mock_volume_list)
+    assert volume_id in deleted
+    
+    # Verify volume no longer exists or is deleting
+    # moto deletes it immediately, so describe_volumes should throw ClientError
+    with pytest.raises(Exception):
+        ec2_client.describe_volumes(VolumeIds=[volume_id])
+
