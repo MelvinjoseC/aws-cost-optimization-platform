@@ -39,6 +39,9 @@ resource "aws_lambda_function" "optimizer" {
       RDS_IDLE_HOURS           = "48"
       K8S_REQUESTS_THRESHOLD   = "0"
       K8S_IDLE_HOURS           = "24"
+      DELETE_UNUSED_EBS        = var.delete_unused_ebs
+      RELEASE_UNUSED_EIP       = var.release_unused_eip
+      AWS_REGIONS              = var.aws_regions
     }
   }
 }

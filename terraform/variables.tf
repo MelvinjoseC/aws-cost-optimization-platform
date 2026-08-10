@@ -38,3 +38,22 @@ variable "lambda_schedule" {
   type        = string
   default     = "cron(0 2 * * ? *)" # Daily 2 AM UTC
 }
+
+variable "delete_unused_ebs" {
+  description = "Whether the lambda should actively delete unattached EBS volumes (when dry_run=false)"
+  type        = string
+  default     = "false"
+}
+
+variable "release_unused_eip" {
+  description = "Whether the lambda should actively release unassociated Elastic IPs (when dry_run=false)"
+  type        = string
+  default     = "false"
+}
+
+variable "aws_regions" {
+  description = "Comma-separated list of target AWS regions to scan. If blank, scans the deployment region."
+  type        = string
+  default     = "us-east-1"
+}
+

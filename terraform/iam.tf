@@ -44,7 +44,7 @@ resource "aws_iam_policy" "lambda_policy" {
         ]
         Resource = "*"
       },
-      # EC2/EBS/EIP Scan, Stop, and Tag
+      # EC2/EBS/EIP Scan, Stop, Tag, and Clean up
       {
         Effect = "Allow"
         Action = [
@@ -52,7 +52,18 @@ resource "aws_iam_policy" "lambda_policy" {
           "ec2:DescribeVolumes",
           "ec2:DescribeAddresses",
           "ec2:StopInstances",
-          "ec2:CreateTags"
+          "ec2:CreateTags",
+          "ec2:DeleteVolume",
+          "ec2:ReleaseAddress"
+        ]
+        Resource = "*"
+      },
+      # Elastic Load Balancing Describe and Scan
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticloadbalancing:DescribeLoadBalancers",
+          "elasticloadbalancing:DescribeTags"
         ]
         Resource = "*"
       },
@@ -81,6 +92,15 @@ resource "aws_iam_policy" "lambda_policy" {
           "sns:Publish"
         ]
         Resource = aws_sns_topic.alerts.arn
+      },
+      # KMS Key Permissions for S3 and SNS Encryption
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey*"
+        ]
+        Resource = aws_kms_key.kms_key.arn
       },
       # EKS describe (to fetch Kubeconfig details if configuring connection from outside cluster)
       {
