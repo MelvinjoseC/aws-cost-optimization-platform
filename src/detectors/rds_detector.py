@@ -1,7 +1,4 @@
-import os
-from datetime import datetime, timedelta, timezone
-from botocore.exceptions import ClientError
-from src.utils.aws_client import get_aws_client
+from src.utils.aws_client import get_aws_client, get_target_regions
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -30,6 +27,7 @@ def is_rds_idle(cw_client, db_id: str, connections_threshold: int, idle_hours: i
     start_time = end_time - timedelta(hours=idle_hours)
     
     try:
+        # We fetch metric stats from the regional CloudWatch client
         response = cw_client.get_metric_statistics(
             Namespace='AWS/RDS',
             MetricName='DatabaseConnections',
@@ -60,65 +58,72 @@ def detect_idle_rds_instances() -> list:
     """
     Scans for RDS DB instances with 0 connections for the last 48 hours.
     Excludes RDS instances with opt-out tag: CostOptimizerOptOut=true.
+    Supports multi-region scanning.
     """
     logger.info("Starting idle RDS instance detection...")
-    
-    rds_client = get_aws_client('rds')
-    cw_client = get_aws_client('cloudwatch')
     
     connections_threshold = int(os.environ.get("RDS_CONNECTION_THRESHOLD", 0))
     idle_hours = int(os.environ.get("RDS_IDLE_HOURS", 48))
     
     idle_rds = []
+    target_regions = get_target_regions()
     
-    try:
-        paginator = rds_client.get_paginator('describe_db_instances')
-        pages = paginator.paginate()
+    for region in target_regions:
+        logger.info(f"Scanning RDS instances in region: {region}")
+        rds_client = get_aws_client('rds', region_name=region)
+        cw_client = get_aws_client('cloudwatch', region_name=region)
         
-        for page in pages:
-            for db_instance in page.get('DBInstances', []):
-                db_id = db_instance.get('DBInstanceIdentifier')
-                db_class = db_instance.get('DBInstanceClass')
-                db_status = db_instance.get('DBInstanceStatus')
-                tags = db_instance.get('TagList', [])
-                
-                # Convert tag list to dict
-                tag_dict = {tag['Key']: tag['Value'] for tag in tags}
-                
-                if db_status != 'available':
-                    logger.debug(f"Skipping RDS instance {db_id} as status is '{db_status}' (not available).")
-                    continue
-                
-                if tag_dict.get('CostOptimizerOptOut') == 'true':
-                    logger.info(f"RDS instance {db_id} opted out of auto-stopping via tag.")
-                    continue
+        try:
+            paginator = rds_client.get_paginator('describe_db_instances')
+            pages = paginator.paginate()
+            
+            for page in pages:
+                for db_instance in page.get('DBInstances', []):
+                    db_id = db_instance.get('DBInstanceIdentifier')
+                    db_class = db_instance.get('DBInstanceClass')
+                    db_status = db_instance.get('DBInstanceStatus')
+                    tags = db_instance.get('TagList', [])
                     
-                if is_rds_idle(cw_client, db_id, connections_threshold, idle_hours):
-                    monthly_savings = get_estimated_monthly_savings(db_class)
+                    # Convert tag list to dict
+                    tag_dict = {tag['Key']: tag['Value'] for tag in tags}
                     
-                    logger.info(
-                        f"Detected Idle RDS Instance: ID={db_id}, Class={db_class}, "
-                        f"Estimated Savings=${monthly_savings}/mo"
-                    )
+                    if db_status != 'available':
+                        logger.debug(f"Skipping RDS instance {db_id} in {region} as status is '{db_status}' (not available).")
+                        continue
                     
-                    idle_rds.append({
-                        'resource_id': db_id,
-                        'resource_type': 'RDS',
-                        'name': db_id,
-                        'details': {
-                            'engine': db_instance.get('Engine'),
-                            'engine_version': db_instance.get('EngineVersion'),
-                            'db_instance_class': db_class,
-                            'status': db_status,
-                            'arn': db_instance.get('DBInstanceArn')
-                        },
-                        'estimated_monthly_savings': monthly_savings,
-                        'opt_out_tag': False
-                    })
-                    
-    except ClientError as e:
-        logger.error(f"Error describing RDS instances: {e}")
-        raise e
-        
-    logger.info(f"RDS scanning completed. Found {len(idle_rds)} idle DB instances.")
+                    if tag_dict.get('CostOptimizerOptOut') == 'true':
+                        logger.info(f"RDS instance {db_id} opted out of auto-stopping via tag.")
+                        continue
+                        
+                    if is_rds_idle(cw_client, db_id, connections_threshold, idle_hours):
+                        monthly_savings = get_estimated_monthly_savings(db_class)
+                        
+                        logger.info(
+                            f"[{region}] Detected Idle RDS Instance: ID={db_id}, Class={db_class}, "
+                            f"Estimated Savings=${monthly_savings}/mo"
+                        )
+                        
+                        idle_rds.append({
+                            'resource_id': db_id,
+                            'resource_type': 'RDS',
+                            'name': db_id,
+                            'details': {
+                                'region': region,
+                                'engine': db_instance.get('Engine'),
+                                'engine_version': db_instance.get('EngineVersion'),
+                                'db_instance_class': db_class,
+                                'status': db_status,
+                                'arn': db_instance.get('DBInstanceArn')
+                            },
+                            'estimated_monthly_savings': monthly_savings,
+                            'opt_out_tag': False
+                        })
+                        
+        except ClientError as e:
+            logger.error(f"Error describing RDS instances in region {region}: {e}")
+            # Continue scanning other regions even if one fails
+            continue
+            
+    logger.info(f"RDS scanning completed. Found {len(idle_rds)} idle DB instances across all targeted regions.")
     return idle_rds
+
