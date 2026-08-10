@@ -26,12 +26,21 @@ resource "aws_s3_bucket" "reports" {
   force_destroy = true
 }
 
+resource "aws_s3_bucket_versioning" "reports_versioning" {
+  bucket = aws_s3_bucket.reports.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_lifecycle_configuration" "reports_lifecycle" {
   bucket = aws_s3_bucket.reports.id
 
   rule {
     id     = "90-day-expiration"
     status = "Enabled"
+
+    filter {}
 
     expiration {
       days = 90
@@ -57,6 +66,32 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "reports_encryptio
     }
   }
 }
+
+resource "aws_s3_bucket_policy" "reports_policy" {
+  bucket = aws_s3_bucket.reports.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "EnforceTLSRequestsOnly"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.reports.arn,
+          "${aws_s3_bucket.reports.arn}/*"
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+}
+
 
 # --- SNS Topic for Alert Notifications ---
 resource "aws_sns_topic" "alerts" {
