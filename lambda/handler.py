@@ -14,6 +14,8 @@ from src.detectors.elb_detector import detect_idle_elb_instances
 from src.actions.stop_ec2 import stop_ec2_instances
 from src.actions.stop_rds import stop_rds_instances
 from src.actions.scale_down import scale_down_k8s_deployments
+from src.actions.delete_ebs import delete_unattached_ebs_volumes
+from src.actions.release_eip import release_unused_eips
 from src.reports.generator import generate_reports
 from src.reports.notifier import send_sns_notification
 
@@ -97,6 +99,8 @@ def main_handler(event: dict, context) -> dict:
     remediated_ec2 = []
     remediated_rds = []
     remediated_k8s = []
+    remediated_ebs = []
+    remediated_eip = []
     
     if not dry_run:
         logger.info("Executing active scale-down/stopping remediation actions...")
@@ -113,6 +117,16 @@ def main_handler(event: dict, context) -> dict:
         # Scale-down Kubernetes deployments
         if k8s_resources:
             remediated_k8s = scale_down_k8s_deployments(k8s_resources)
+
+        # Delete unattached EBS volumes
+        delete_ebs_flag = os.environ.get("DELETE_UNUSED_EBS", "false").lower() == "true"
+        if delete_ebs_flag and ebs_resources:
+            remediated_ebs = delete_unattached_ebs_volumes(ebs_resources)
+
+        # Release unassociated Elastic IPs
+        release_eip_flag = os.environ.get("RELEASE_UNUSED_EIP", "false").lower() == "true"
+        if release_eip_flag and eip_resources:
+            remediated_eip = release_unused_eips(eip_resources)
     else:
         logger.info("Dry-run mode is enabled. No remediation actions will be executed.")
 
@@ -141,7 +155,9 @@ def main_handler(event: dict, context) -> dict:
             "remediated_resources": {
                 "ec2": remediated_ec2,
                 "rds": remediated_rds,
-                "kubernetes_deployments": remediated_k8s
+                "kubernetes_deployments": remediated_k8s,
+                "ebs_volumes": remediated_ebs,
+                "elastic_ips": remediated_eip
             },
             "s3_html_report": report_summary.get("s3_html_url"),
             "s3_json_report": report_summary.get("s3_json_url")
