@@ -18,12 +18,27 @@ spec:
         spec:
           serviceAccountName: cost-optimizer-sa
           restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: cost-optimizer
               # Pinned/custom build of the Python application
               image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/aws-cost-optimizer:v1.0.0
               imagePullPolicy: IfNotPresent
               command: ["python", "lambda/handler.py"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+                capabilities:
+                  drop:
+                    - ALL
               env:
                 - name: DRY_RUN
                   value: "true" # Keep dry-run on by default for safety
@@ -53,3 +68,10 @@ spec:
                 requests:
                   cpu: "100m"
                   memory: "128Mi"
+              volumeMounts:
+                - name: tmp-volume
+                  mountPath: /tmp
+          volumes:
+            - name: tmp-volume
+              emptyDir: {}
+
