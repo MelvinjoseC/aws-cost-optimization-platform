@@ -61,10 +61,13 @@ The platform runs in **Dry-Run** mode by default (`DRY_RUN=true`). In dry-run mo
 
 | Variable Name | Default Value | Description |
 | :--- | :--- | :--- |
-| `DRY_RUN` | `true` | When `true`, scans resources and outputs reports without stopping or scaling resources. |
-| `S3_BUCKET_NAME` | *(Required)* | S3 Bucket name where generated HTML/JSON savings reports are uploaded. |
+| `DRY_RUN` | `true` | When `true`, scans resources and outputs reports without stopping, deleting, or scaling resources. |
+| `DELETE_UNUSED_EBS` | `false` | When `true` (and `DRY_RUN=false`), actively deletes unattached EBS volumes found. |
+| `RELEASE_UNUSED_EIP` | `false` | When `true` (and `DRY_RUN=false`), actively releases unassociated Elastic IPs found. |
+| `S3_BUCKET_NAME` | *(Required)* | S3 Bucket name where generated HTML/JSON/CSV savings reports are uploaded. |
 | `SNS_TOPIC_ARN` | *(Required)* | AWS SNS Topic ARN to publish the execution savings summary alerts. |
-| `AWS_DEFAULT_REGION` | `us-east-1` | Target region for scanning and resources. |
+| `AWS_DEFAULT_REGION` | `us-east-1` | Target fallback region if `AWS_REGIONS` is unset. |
+| `AWS_REGIONS` | `us-east-1` | Comma-separated list of target regions to audit (e.g. `us-east-1,us-west-2,eu-west-1`). |
 | `EC2_CPU_THRESHOLD` | `5.0` | CPU utilization percentage threshold below which EC2 is flagged as idle. |
 | `EC2_IDLE_HOURS` | `72` | The timeframe in hours to verify low CPU usage for EC2. |
 | `RDS_CONNECTION_THRESHOLD` | `0` | Database connection count threshold below which RDS is flagged as idle. |
@@ -75,22 +78,25 @@ The platform runs in **Dry-Run** mode by default (`DRY_RUN=true`). In dry-run mo
 
 ## Local Setup & Development
 
-### 1. Install Dependencies
+The project includes a `Makefile` to simplify virtual environment setup, code formatting, lint checks, and testing.
+
+### 1. Install Dependencies and Setup Environment
 ```bash
-pip install -r requirements.txt
+make setup
 ```
 
-### 2. Configure Environment
-Copy `.env.example` to `.env` and fill in your AWS details.
+### 2. Run Quality Checks
 ```bash
-cp .env.example .env
+make lint       # Run flake8 and pylint
+make format     # Auto-format codebase using black
 ```
 
 ### 3. Run Tests
 Verify detectors, reports, and actions with unit tests using mocked AWS services via `moto`:
 ```bash
-pytest
+make test
 ```
+
 
 ## Infrastructure Deployment (Terraform)
 
