@@ -1,170 +1,150 @@
-# AWS Cost Optimization Platform
+# AWS Cost Optimization & FinOps Platform
 
-The **AWS Cost Optimization Platform** is an automated, production-grade DevOps solution that identifies idle cloud resources and scales them down or stops them to reduce running costs. Built for AWS Lambda and Kubernetes environment workloads, it scans resources using CloudWatch metrics, enforces safety boundaries with tag-based opt-outs, and exports professional monthly savings reports (HTML and JSON) to S3 while firing alerts to an SNS notification topic.
+The **AWS Cost Optimization Platform** is an enterprise-grade, bidirectional FinOps automation solution engineered for cloud infrastructure and Kubernetes workloads. It continuously audits multi-region AWS environments for underutilized, orphaned, and oversized resources, executes safe automated remediations with tag-based governance guardrails, supports scheduled weekday morning restorations, and delivers executive dashboards, S3 reports (HTML/JSON/CSV), SNS alerts, and Slack notifications.
 
-## Architecture Diagram
+---
+
+## 🏛 Architecture Diagram
 
 ```text
-                  +-----------------------------------------+
-                  |         Amazon CloudWatch Events        |
-                  |          (Daily Cron at 2:00 UTC)       |
-                  +--------------------+--------------------+
-                                       |
-                                       v
-                  +--------------------+--------------------+
-                  |             AWS Lambda Function         |
-                  |          (python/lambda/handler.py)     |
-                  +-----+--------------+--------------+-----+
-                        |              |              |
-         +--------------+              |              +-------------+
-         |                             v                            |
-         v                     +-------+-------+                    v
-+--------+--------+            | Kubernetes    |           +--------+--------+
-|   AWS SDK       |            | API / Client  |           | AWS S3 & SNS    |
-|   (boto3)       |            +-------+-------+           | (Report/Alerts) |
-+--------+--------+                    |                   +--------+--------+
-         |                             |                            |
-         | (Scan & Stop)               | (Scale down to 0)          | (Upload/Email)
-         v                             v                            v
-  +------+------+               +------+------+              +------+------+
-  |  EC2 / RDS  |               | Deployments |              |  S3 reports |
-  |  EBS / EIP  |               | in Cluster  |              |  SNS Alerts |
-  +-------------+               +-------------+              +-------------+
+                  +-----------------------------------------------+
+                  |         Amazon EventBridge Schedules          |
+                  |  - Nightly Optimize (Daily at 02:00 UTC)      |
+                  |  - Morning Restore  (Mon-Fri at 07:00 UTC)    |
+                  +-----------------------+-----------------------+
+                                          |
+                                          v
+                  +-----------------------+-----------------------+
+                  |              AWS Lambda Function              |
+                  |      (lambda/handler.py | Dual Mode)          |
+                  +---+---------------+---------------+-------+---+
+                      |               |               |       |
+      +---------------+               |               |       +---------------+
+      |                               |               |                       |
+      v                               v               v                       v
++-----+-------+                 +-----+-------+ +-----+-------+         +-----+-------+
+|  Detectors  |                 |  Governance | | Remediations|         |Observability|
+| (Multi-Reg) |                 |  Guardrails | | & Restores  |         | & Reporting |
++-----+-------+                 +-----+-------+ +-----+-------+         +-----+-------+
+      |                               |               |                       |
+      |-- EC2 Idle / Rightsizing      |-- Protected   |-- EC2 Stop / Start    |-- CloudWatch
+      |-- RDS DB Idle                 |   Environments|-- RDS Stop / Start    |   Custom Metrics
+      |-- Unattached EBS Volumes      |   (prod/live) |-- K8s Scale Down/Up   |-- FinOps
+      |-- Unassociated Elastic IPs    |-- Tag Checks  |-- EBS Delete          |   Dashboard
+      |-- Idle Classic & App ELBs     |   (OptOut/    |-- EIP Release         |-- S3 Reports
+      |-- Stale EBS Snapshots         |    DoNotStop) |                       |   (HTML/JSON/CSV)
+      |-- Idle NAT Gateways           |               |                       |-- Slack & SNS
+      |-- Idle ElastiCache Nodes      |               |                       |   Alerts
+      |-- K8s Deployments / Pods      |               |                       |
 ```
 
-## Key Features
+---
 
-1. **Idle Resource Detection**:
-   * **EC2**: Average CPU utilization < 5% for 72 hours via CloudWatch.
-   * **RDS**: Maximum database connection count = 0 for 48 hours.
-   * **Kubernetes Deployments**: HPAs reporting 0 requests/traffic for 24 hours.
-   * **Load Balancers**: Application & Classic LBs with 0 requests for 7 days (168 hours).
-   * **Storage & Networking**: Unattached EBS volumes and unassociated Elastic IPs.
-2. **Automated Remediations (Scale-Down)**:
-   * Stop idle EC2 instances (with `CostOptimizerOptOut=true` tag override).
-   * Create snapshot and stop idle RDS instances.
-   * Scale Kubernetes deployment replicas to 0, annotating them with `cost-optimizer/original-replicas` for easy restoration.
-3. **Savings Report and Notifications**:
-   * Generate interactive HTML and JSON data reports.
-   * Save reports to S3 with a date-based folder prefix (`reports/YYYY/MM/DD/`).
-   * Deliver email summary/Slack integrations via an SNS topic.
+## 🚀 Key Capabilities
 
-## Dry-Run Mode
+### 1. Multi-Service Resource Detection
+* **EC2 Instances**: Identifies instances with average CPU < 5% over 72 hours.
+* **EC2 Rightsizing**: Flags overprovisioned instances whose 7-day peak CPU remains below 20%, proposing downsized instance tiers.
+* **RDS Databases**: Flags DB instances with 0 connections over 48 hours.
+* **Unattached EBS Volumes**: Discovers volumes in `available` (unattached) status.
+* **Stale EBS Snapshots**: Identifies orphaned snapshots older than 30 days whose parent volume no longer exists.
+* **Unassociated Elastic IPs**: Finds unattached public IPv4 addresses incurring hourly idle charges.
+* **Idle NAT Gateways**: Identifies VPC NAT Gateways with 0 active connections over 7 days (~$32.40/mo per gateway).
+* **Idle ElastiCache**: Scans Redis and Memcached clusters with 0 client connections over 72 hours.
+* **Idle Load Balancers**: Flags ALBs and Classic ELBs with 0 requests over 7 days.
+* **Kubernetes Workloads**: Detects idle deployments via HPA metrics and flags pods with disproportionate CPU/Memory requests.
 
-The platform runs in **Dry-Run** mode by default (`DRY_RUN=true`). In dry-run mode:
-* Detectors run normally and calculate all potential monthly savings.
-* Reports and notifications are generated and published, displaying a preview of actions.
-* **No resources are modified or stopped.** No EC2 instances are stopped, no RDS instances are stopped, and no Kubernetes replicas are scaled down.
-* Toggle the environment variable `DRY_RUN=false` in the Lambda config or CronJob to enable active automated remediation.
+### 2. Bidirectional Remediation & Restoration
+* **Stateful Stopping**: Stops idle EC2 instances and creates a timestamped safety snapshot before stopping RDS DBs.
+* **Kubernetes Scale-to-Zero**: Saves original replica counts to annotation `cost-optimizer/original-replicas` before scaling down.
+* **Automated Morning Restoration**: Built-in `restore` mode automatically restarts stopped instances and scales deployments back up before working hours.
 
-## Environment Variables
+### 3. Enterprise Governance & Safety Guardrails
+* **Protected Environments**: Automatically shields resources in `production`, `prod`, `live`, or `critical` environments unless explicitly overridden by `ALLOW_PRODUCTION_REMEDIATION=true`.
+* **Tag Opt-Out**: Respects tags `CostOptimizerOptOut=true`, `DoNotStop=true`, and `Protected=true`.
+* **Dry-Run by Default**: Runs in simulation mode (`DRY_RUN=true`) out of the box to prevent accidental downtime.
 
-| Variable Name | Default Value | Description |
+### 4. Observability & Reporting
+* **Executive Reports**: Generates interactive HTML dashboards, structured JSON, and CSV exports uploaded to S3.
+* **CloudWatch Custom Metrics**: Emits `EstimatedMonthlySavings`, `IdleResourcesDetected`, and `SavingsByCategory` under namespace `CostOptimization/Metrics`.
+* **CloudWatch FinOps Dashboard**: Built-in Terraform module provisioning real-time savings graphs.
+* **Multi-Channel Notifications**: Real-time alerts via Amazon SNS and rich interactive Slack Block Kit webhooks.
+
+---
+
+## 💻 CLI Usage
+
+The platform includes a first-class CLI (`cli.py`) for local audits, CI/CD pipelines, and scheduled cron jobs.
+
+```bash
+# Audit idle resources across multiple regions (Dry-Run preview)
+python cli.py --action scan --regions us-east-1,us-west-2
+
+# Perform active remediation (stop/delete non-production resources)
+python cli.py --action remediate --no-dry-run --regions us-east-1
+
+# Restore all previously stopped EC2, RDS, and Kubernetes workloads
+python cli.py --action restore
+```
+
+---
+
+## ⚙️ Configuration Reference
+
+| Environment Variable | Default | Purpose |
 | :--- | :--- | :--- |
-| `DRY_RUN` | `true` | When `true`, scans resources and outputs reports without stopping, deleting, or scaling resources. |
-| `DELETE_UNUSED_EBS` | `false` | When `true` (and `DRY_RUN=false`), actively deletes unattached EBS volumes found. |
-| `RELEASE_UNUSED_EIP` | `false` | When `true` (and `DRY_RUN=false`), actively releases unassociated Elastic IPs found. |
-| `S3_BUCKET_NAME` | *(Required)* | S3 Bucket name where generated HTML/JSON/CSV savings reports are uploaded. |
-| `SNS_TOPIC_ARN` | *(Required)* | AWS SNS Topic ARN to publish the execution savings summary alerts. |
-| `AWS_DEFAULT_REGION` | `us-east-1` | Target fallback region if `AWS_REGIONS` is unset. |
-| `AWS_REGIONS` | `us-east-1` | Comma-separated list of target regions to audit (e.g. `us-east-1,us-west-2,eu-west-1`). |
-| `EC2_CPU_THRESHOLD` | `5.0` | CPU utilization percentage threshold below which EC2 is flagged as idle. |
-| `EC2_IDLE_HOURS` | `72` | The timeframe in hours to verify low CPU usage for EC2. |
-| `RDS_CONNECTION_THRESHOLD` | `0` | Database connection count threshold below which RDS is flagged as idle. |
-| `RDS_IDLE_HOURS` | `48` | The timeframe in hours to verify connection counts for RDS. |
-| `K8S_REQUESTS_THRESHOLD` | `0` | Requests rate threshold below which deployment is flagged as idle. |
-| `K8S_IDLE_HOURS` | `24` | The timeframe in hours to verify request counts for Kubernetes. |
-| `ELB_IDLE_HOURS` | `168` | The timeframe in hours to verify request counts for Load Balancers. |
+| `DRY_RUN` | `true` | When true, previews all savings without modifying infrastructure |
+| `ALLOW_PRODUCTION_REMEDIATION` | `false` | Safety barrier preventing automated stop/deletion in prod environments |
+| `PROTECTED_ENVIRONMENTS` | `prod,production,live` | Comma-separated list of protected environment tag values |
+| `AWS_REGIONS` | `us-east-1` | Comma-separated list of target AWS regions to audit |
+| `DELETE_UNUSED_EBS` | `false` | Actively deletes unattached EBS volumes when DRY_RUN=false |
+| `RELEASE_UNUSED_EIP` | `false` | Actively releases unassociated Elastic IPs when DRY_RUN=false |
+| `SNAPSHOT_MAX_AGE_DAYS` | `30` | Minimum age (days) before orphaned EBS snapshots are flagged |
+| `NAT_GW_IDLE_HOURS` | `168` | Window in hours to verify 0 connections for NAT Gateways |
+| `ELASTICACHE_IDLE_HOURS` | `72` | Window in hours to verify 0 connections for ElastiCache |
+| `EC2_CPU_THRESHOLD` | `5.0` | Maximum average CPU % to flag an EC2 instance as idle |
+| `S3_BUCKET_NAME` | *(Optional)* | S3 bucket destination for HTML/JSON/CSV reports |
+| `SNS_TOPIC_ARN` | *(Optional)* | AWS SNS topic for alert notifications |
+| `SLACK_WEBHOOK_URL` | *(Optional)* | Incoming Slack Webhook URL for rich Block Kit alerts |
+| `LOG_FORMAT` | `text` | Set to `json` for structured CloudWatch Logs Insights ingestion |
 
-## Local Setup & Development
+---
 
-The project includes a `Makefile` to simplify virtual environment setup, code formatting, lint checks, and testing.
+## 🏗 Infrastructure Deployment
 
-### 1. Install Dependencies and Setup Environment
-```bash
-make setup
-```
+### 1. Terraform Deployment
 
-### 2. Run Quality Checks
-```bash
-make lint       # Run flake8 and pylint
-make format     # Auto-format codebase using black
-```
+Deploy the serverless Lambda function, IAM roles, KMS encryption, CloudWatch FinOps dashboard, and EventBridge schedules:
 
-### 3. Run Tests
-Verify detectors, reports, and actions with unit tests using mocked AWS services via `moto`:
-```bash
-make test
-```
-
-
-## Infrastructure Deployment (Terraform)
-
-Deploy the platform infrastructure (Lambda, IAM Roles, S3 Bucket, SNS Topic, CloudWatch schedule):
 ```bash
 cd terraform
 terraform init
-terraform plan -var="s3_bucket_name=my-cost-reports-bucket"
-terraform apply -var="s3_bucket_name=my-cost-reports-bucket" -auto-approve
+terraform plan -var="s3_bucket_name=my-company-finops-reports"
+terraform apply -var="s3_bucket_name=my-company-finops-reports" -auto-approve
 ```
 
-## Kubernetes Deployment
+### 2. Kubernetes Helm Deployment
 
-Deploy the Kubernetes RBAC policies and CronJob to inspect and scale down workloads inside a cluster:
+Deploy the Kubernetes CronJob and RBAC permissions using Helm:
+
 ```bash
-kubectl apply -f k8s/rbac.yaml
-kubectl apply -f k8s/cronjob.yaml
+helm install aws-cost-optimizer ./helm/aws-cost-optimizer \
+  --namespace finops \
+  --create-namespace \
+  --set config.dryRun="true" \
+  --set config.s3BucketName="my-company-finops-reports"
 ```
 
-## Example Savings Report Output (JSON)
+---
 
-When scanning executes, the JSON report is generated and saved under `s3://<bucket_name>/reports/YYYY/MM/DD/report_<date>.json`:
+## 🧪 Testing & Verification
 
-```json
-{
-  "generated_at": "2026-06-23T02:00:00Z",
-  "dry_run": true,
-  "total_estimated_monthly_savings": 105.20,
-  "total_idle_resources_count": 3,
-  "resources": [
-    {
-      "resource_id": "i-0abcd1234efgh5678",
-      "resource_type": "EC2",
-      "name": "staging-analytics-worker",
-      "details": {
-        "instance_type": "t3.medium",
-        "launch_time": "2026-06-01T08:00:00Z",
-        "state": "running"
-      },
-      "estimated_monthly_savings": 29.95,
-      "opt_out_tag": false
-    },
-    {
-      "resource_id": "production-reporting-db",
-      "resource_type": "RDS",
-      "name": "production-reporting-db",
-      "details": {
-        "engine": "postgres",
-        "engine_version": "15.4",
-        "db_instance_class": "db.t3.medium",
-        "status": "available",
-        "arn": "arn:aws:rds:us-east-1:123456789012:db:production-reporting-db"
-      },
-      "estimated_monthly_savings": 71.65,
-      "opt_out_tag": false
-    },
-    {
-      "resource_id": "vol-0123456789abcdef0",
-      "resource_type": "EBS",
-      "name": "temp-scratch-disk",
-      "details": {
-        "size_gb": 45,
-        "volume_type": "gp3",
-        "create_time": "2026-05-15T10:30:00Z"
-      },
-      "estimated_monthly_savings": 3.60,
-      "opt_out_tag": false
-    }
-  ]
-}
+Run the full automated test suite with unit tests and mocks:
+
+```bash
+# Run all unit tests
+python -m pytest
+
+# Run flake8 lint check
+python -m flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 ```
