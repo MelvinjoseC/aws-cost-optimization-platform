@@ -21,6 +21,7 @@ from src.detectors.eip_detector import detect_unused_eips
 from src.detectors.elb_detector import detect_idle_elb_instances
 from src.actions.stop_ec2 import stop_ec2_instances
 from src.actions.stop_rds import stop_rds_instances
+from src.actions.restore_rds import restore_rds_instances
 from src.actions.delete_ebs import delete_unattached_ebs_volumes
 from src.actions.release_eip import release_unused_eips
 from src.reports.generator import generate_reports
@@ -362,3 +363,51 @@ def test_multi_region_ec2_scan(aws_credentials):
     assert len(idle_instances) == 2
     regions = {inst["details"]["region"] for inst in idle_instances}
     assert regions == {"us-east-1", "us-west-2"}
+
+
+@mock_aws
+def test_detect_and_remediate_rds(aws_credentials):
+    """Test RDS detector discovers idle instance and stop action executes."""
+    rds_client = boto3.client("rds", region_name="us-east-1")
+    cw_client = boto3.client("cloudwatch", region_name="us-east-1")
+
+    # 1. Create a mock RDS instance
+    rds_client.create_db_instance(
+        DBInstanceIdentifier="test-db-prod",
+        DBInstanceClass="db.t3.micro",
+        Engine="postgres",
+        MasterUsername="postgres",
+        MasterUserPassword="dummyPassword123!",
+        AllocatedStorage=20,
+    )
+
+    # 2. Put 0 connection metrics
+    cw_client.put_metric_data(
+        Namespace="AWS/RDS",
+        MetricData=[
+            {
+                "MetricName": "DatabaseConnections",
+                "Dimensions": [
+                    {"Name": "DBInstanceIdentifier", "Value": "test-db-prod"}
+                ],
+                "Value": 0.0,
+                "Unit": "Count",
+            }
+        ],
+    )
+
+    idle_dbs = detect_idle_rds_instances()
+    assert len(idle_dbs) == 1
+    assert idle_dbs[0]["resource_id"] == "test-db-prod"
+    assert idle_dbs[0]["resource_type"] == "RDS"
+    assert idle_dbs[0]["estimated_monthly_savings"] > 0
+
+    # 3. Test Stop Action (Active Run)
+    os.environ["DRY_RUN"] = "false"
+    stopped = stop_rds_instances(idle_dbs)
+    assert "test-db-prod" in stopped
+
+    # 4. Test Restore Action
+    restored = restore_rds_instances(idle_dbs)
+    assert "test-db-prod" in restored
+
