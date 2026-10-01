@@ -3,7 +3,7 @@ data "archive_file" "lambda_zip" {
   type        = "zip"
   source_dir  = "${path.module}/.."
   output_path = "${path.module}/lambda_function_payload.zip"
-  
+
   excludes = [
     "terraform",
     ".github",

@@ -12,3 +12,8 @@ output "lambda_arn" {
   description = "The ARN of the cost optimization Lambda function"
   value       = aws_lambda_function.optimizer.arn
 }
+
+output "dashboard_name" {
+  description = "The name of the CloudWatch FinOps dashboard"
+  value       = aws_cloudwatch_dashboard.finops_dashboard.dashboard_name
+}

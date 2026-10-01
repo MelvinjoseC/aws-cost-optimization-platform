@@ -57,3 +57,15 @@ variable "aws_regions" {
   default     = "us-east-1"
 }
 
+variable "enable_morning_restore" {
+  description = "Whether to deploy the automated weekday morning resource restoration schedule"
+  type        = bool
+  default     = true
+}
+
+variable "morning_restore_schedule" {
+  description = "EventBridge cron schedule expression for weekday morning restore"
+  type        = string
+  default     = "cron(0 7 ? * MON-FRI *)"
+}
+
