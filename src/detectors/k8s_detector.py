@@ -1,7 +1,6 @@
-import os
 from kubernetes import client
 from kubernetes.client.rest import ApiException
-from src.utils.k8s_client import get_apps_v1_api, get_custom_objects_api
+from src.utils.k8s_client import get_apps_v1_api
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)

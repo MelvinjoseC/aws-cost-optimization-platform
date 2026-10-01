@@ -1,3 +1,4 @@
+from botocore.exceptions import ClientError
 from src.utils.aws_client import get_aws_client, get_target_regions
 from src.utils.logger import get_logger
 
