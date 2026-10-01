@@ -1,103 +1,129 @@
 import os
 import sys
 
-# Ensure the parent directory is in python path so that src.* imports work inside Lambda
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Ensure parent directory is in sys.path so src.* imports resolve inside Lambda
+_parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
 
-from src.utils.logger import get_logger
-from src.detectors.ec2_detector import detect_idle_ec2_instances
-from src.detectors.rds_detector import detect_idle_rds_instances
-from src.detectors.ebs_detector import detect_unattached_ebs_volumes
-from src.detectors.eip_detector import detect_unused_eips
-from src.detectors.k8s_detector import detect_idle_k8s_deployments
-from src.detectors.elb_detector import detect_idle_elb_instances
-from src.actions.stop_ec2 import stop_ec2_instances
-from src.actions.stop_rds import stop_rds_instances
-from src.actions.scale_down import scale_down_k8s_deployments
-from src.actions.delete_ebs import delete_unattached_ebs_volumes
-from src.actions.release_eip import release_unused_eips
-from src.reports.generator import generate_reports
-from src.reports.notifier import send_sns_notification
+from src.utils.logger import get_logger, set_correlation_id  # noqa: E402
+from src.utils.governance import filter_actionable_resources  # noqa: E402
+from src.utils.metrics_publisher import publish_finops_metrics  # noqa: E402
+from src.detectors.ec2_detector import detect_idle_ec2_instances  # noqa: E402
+from src.detectors.rds_detector import detect_idle_rds_instances  # noqa: E402
+from src.detectors.ebs_detector import (  # noqa: E402
+    detect_unattached_ebs_volumes,
+)
+from src.detectors.eip_detector import detect_unused_eips  # noqa: E402
+from src.detectors.k8s_detector import (  # noqa: E402
+    detect_idle_k8s_deployments,
+)
+from src.detectors.elb_detector import detect_idle_elb_instances  # noqa: E402
+from src.detectors.snapshot_detector import (  # noqa: E402
+    detect_stale_ebs_snapshots,
+)
+from src.detectors.nat_gateway_detector import (  # noqa: E402
+    detect_idle_nat_gateways,
+)
+from src.detectors.elasticache_detector import (  # noqa: E402
+    detect_idle_elasticache_clusters,
+)
+from src.actions.stop_ec2 import stop_ec2_instances  # noqa: E402
+from src.actions.stop_rds import stop_rds_instances  # noqa: E402
+from src.actions.scale_down import scale_down_k8s_deployments  # noqa: E402
+from src.actions.delete_ebs import (  # noqa: E402
+    delete_unattached_ebs_volumes,
+)
+from src.actions.release_eip import release_unused_eips  # noqa: E402
+from src.actions.restore_ec2 import restore_ec2_instances  # noqa: E402
+from src.actions.restore_rds import restore_rds_instances  # noqa: E402
+from src.actions.restore_k8s import restore_k8s_deployments  # noqa: E402
+from src.reports.generator import generate_reports  # noqa: E402
+from src.reports.notifier import send_sns_notification  # noqa: E402
+from src.reports.slack_notifier import send_slack_notification  # noqa: E402
 
 logger = get_logger("cost-optimizer-handler")
 
 
+def handle_restore_action(event: dict) -> dict:
+    """Handles resource restoration workflow."""
+    logger.info("Executing restore action across services...")
+    restored_ec2 = restore_ec2_instances()
+    restored_rds = restore_rds_instances()
+    restored_k8s = restore_k8s_deployments()
+
+    return {
+        "statusCode": 200,
+        "body": {
+            "message": "Resource restoration finished.",
+            "action": "restore",
+            "restored_resources": {
+                "ec2": restored_ec2,
+                "rds": restored_rds,
+                "kubernetes": restored_k8s,
+            },
+        },
+    }
+
+
 def main_handler(event: dict, context) -> dict:
     """
-    AWS Lambda entrypoint. Coordinates scanning, actions, report generation, and notifications.
+    AWS Lambda entrypoint. Supports optimize and restore actions.
+    Coordinates scanning, governance filtering, actions, reports, and metrics.
     """
+    req_id = getattr(context, "aws_request_id", None) if context else None
+    set_correlation_id(req_id)
+
+    action = (event or {}).get("action", "optimize").lower()
+    if action == "restore":
+        return handle_restore_action(event or {})
+
     logger.info("Starting AWS Cost Optimization Platform run...")
 
     # 1. Determine execution mode (Dry Run / Active Execution)
-    # Event parameter overrides the DRY_RUN environment variable
     dry_run_env = os.environ.get("DRY_RUN", "true").lower() == "true"
-
     if event and "dry_run" in event:
         dry_run = str(event.get("dry_run")).lower() == "true"
-        logger.info(f"Dry-run mode overridden by event payload: {dry_run}")
     elif event and "DRY_RUN" in event:
         dry_run = str(event.get("DRY_RUN")).lower() == "true"
-        logger.info(f"Dry-run mode overridden by event payload: {dry_run}")
     else:
         dry_run = dry_run_env
-        logger.info(f"Dry-run mode loaded from environment: {dry_run}")
 
-    # Sync environmental variable so child functions inherit overridden event values
     os.environ["DRY_RUN"] = str(dry_run).lower()
+    logger.info(f"Execution mode configured: DRY_RUN={dry_run}")
 
     # 2. Run Resource Detectors
     all_detected_resources = []
+    scanners = [
+        ("EC2", detect_idle_ec2_instances),
+        ("RDS", detect_idle_rds_instances),
+        ("EBS", detect_unattached_ebs_volumes),
+        ("EIP", detect_unused_eips),
+        ("K8S", detect_idle_k8s_deployments),
+        ("ELB", detect_idle_elb_instances),
+        ("Snapshot", detect_stale_ebs_snapshots),
+        ("NATGateway", detect_idle_nat_gateways),
+        ("ElastiCache", detect_idle_elasticache_clusters),
+    ]
 
-    # EC2
-    try:
-        ec2_resources = detect_idle_ec2_instances()
-        all_detected_resources.extend(ec2_resources)
-    except Exception as e:
-        logger.error(f"Failed to scan EC2: {e}")
-        ec2_resources = []
-
-    # RDS
-    try:
-        rds_resources = detect_idle_rds_instances()
-        all_detected_resources.extend(rds_resources)
-    except Exception as e:
-        logger.error(f"Failed to scan RDS: {e}")
-        rds_resources = []
-
-    # EBS
-    try:
-        ebs_resources = detect_unattached_ebs_volumes()
-        all_detected_resources.extend(ebs_resources)
-    except Exception as e:
-        logger.error(f"Failed to scan EBS: {e}")
-
-    # Elastic IPs
-    try:
-        eip_resources = detect_unused_eips()
-        all_detected_resources.extend(eip_resources)
-    except Exception as e:
-        logger.error(f"Failed to scan Elastic IPs: {e}")
-
-    # Kubernetes Deployments
-    try:
-        k8s_resources = detect_idle_k8s_deployments()
-        all_detected_resources.extend(k8s_resources)
-    except Exception as e:
-        logger.error(f"Failed to scan Kubernetes: {e}")
-        k8s_resources = []
-
-    # Load Balancers
-    try:
-        elb_resources = detect_idle_elb_instances()
-        all_detected_resources.extend(elb_resources)
-    except Exception as e:
-        logger.error(f"Failed to scan Load Balancers: {e}")
+    for service_name, scanner_fn in scanners:
+        try:
+            results = scanner_fn()
+            all_detected_resources.extend(results)
+        except Exception as e:
+            logger.error(f"Failed to scan {service_name}: {e}")
 
     logger.info(
-        f"Scanning complete. Total idle resources found: {len(all_detected_resources)}"
+        f"Scanning complete. Total idle resources found: "
+        f"{len(all_detected_resources)}"
     )
 
-    # 3. Perform Actions if not dry run
+    # 3. Apply Governance Guardrails
+    actionable_resources, protected_resources = filter_actionable_resources(
+        all_detected_resources
+    )
+
+    # 4. Perform Remediation Actions if not dry run
     remediated_ec2 = []
     remediated_rds = []
     remediated_k8s = []
@@ -105,57 +131,92 @@ def main_handler(event: dict, context) -> dict:
     remediated_eip = []
 
     if not dry_run:
-        logger.info("Executing active scale-down/stopping remediation actions...")
+        logger.info("Executing active remediation actions...")
 
-        # Stop EC2 instances
-        ec2_ids_to_stop = [res["resource_id"] for res in ec2_resources]
-        if ec2_ids_to_stop:
-            remediated_ec2 = stop_ec2_instances(ec2_ids_to_stop)
+        ec2_to_stop = [
+            r for r in actionable_resources if r["resource_type"] == "EC2"
+        ]
+        if ec2_to_stop:
+            remediated_ec2 = stop_ec2_instances(ec2_to_stop)
 
-        # Snapshot & Stop RDS instances
-        if rds_resources:
-            remediated_rds = stop_rds_instances(rds_resources)
+        rds_to_stop = [
+            r for r in actionable_resources if r["resource_type"] == "RDS"
+        ]
+        if rds_to_stop:
+            remediated_rds = stop_rds_instances(rds_to_stop)
 
-        # Scale-down Kubernetes deployments
-        if k8s_resources:
-            remediated_k8s = scale_down_k8s_deployments(k8s_resources)
+        k8s_to_scale = [
+            r for r in actionable_resources
+            if r["resource_type"] == "KubernetesDeployment"
+        ]
+        if k8s_to_scale:
+            remediated_k8s = scale_down_k8s_deployments(k8s_to_scale)
 
-        # Delete unattached EBS volumes
-        delete_ebs_flag = os.environ.get("DELETE_UNUSED_EBS", "false").lower() == "true"
-        if delete_ebs_flag and ebs_resources:
-            remediated_ebs = delete_unattached_ebs_volumes(ebs_resources)
+        delete_ebs_flag = (
+            os.environ.get("DELETE_UNUSED_EBS", "false").lower() == "true"
+        )
+        ebs_to_del = [
+            r for r in actionable_resources if r["resource_type"] == "EBS"
+        ]
+        if delete_ebs_flag and ebs_to_del:
+            remediated_ebs = delete_unattached_ebs_volumes(ebs_to_del)
 
-        # Release unassociated Elastic IPs
         release_eip_flag = (
             os.environ.get("RELEASE_UNUSED_EIP", "false").lower() == "true"
         )
-        if release_eip_flag and eip_resources:
-            remediated_eip = release_unused_eips(eip_resources)
+        eip_to_rel = [
+            r for r in actionable_resources if r["resource_type"] == "EIP"
+        ]
+        if release_eip_flag and eip_to_rel:
+            remediated_eip = release_unused_eips(eip_to_rel)
     else:
-        logger.info("Dry-run mode is enabled. No remediation actions will be executed.")
+        logger.info("Dry-run mode is active. No remediation executed.")
 
-    # 4. Generate Savings Reports
+    # 5. Generate Savings Reports
     report_summary = {}
     try:
-        report_summary = generate_reports(all_detected_resources, dry_run=dry_run)
+        report_summary = generate_reports(
+            all_detected_resources, dry_run=dry_run
+        )
     except Exception as e:
         logger.error(f"Failed to generate reports: {e}")
 
-    # 5. Send SNS Summary Notification
+    # 6. Publish Observability Metrics to CloudWatch
+    remediated_counts = {
+        "ec2": len(remediated_ec2),
+        "rds": len(remediated_rds),
+        "k8s": len(remediated_k8s),
+        "ebs": len(remediated_ebs),
+        "eip": len(remediated_eip),
+    }
+    publish_finops_metrics(
+        detected_resources=all_detected_resources,
+        remediated_counts=remediated_counts,
+        total_savings=report_summary.get("total_savings", 0.0),
+        dry_run=dry_run,
+    )
+
+    # 7. Send Notifications (SNS and Slack)
     if report_summary:
         try:
             send_sns_notification(report_summary, dry_run=dry_run)
         except Exception as e:
-            logger.error(f"Failed to send notifications: {e}")
+            logger.error(f"Failed to send SNS: {e}")
 
-    # 6. Construct Lambda Response
+        try:
+            send_slack_notification(report_summary, dry_run=dry_run)
+        except Exception as e:
+            logger.error(f"Failed to send Slack alert: {e}")
+
+    total_savings = report_summary.get("total_savings", 0.0)
     return {
         "statusCode": 200,
         "body": {
-            "message": "AWS Cost Optimization execution finished successfully.",
+            "message": "AWS Cost Optimization execution finished.",
             "dry_run": dry_run,
             "detected_resources_count": len(all_detected_resources),
-            "estimated_monthly_savings": report_summary.get("total_savings", 0.0),
+            "protected_resources_count": len(protected_resources),
+            "estimated_monthly_savings": total_savings,
             "remediated_resources": {
                 "ec2": remediated_ec2,
                 "rds": remediated_rds,
@@ -170,11 +231,7 @@ def main_handler(event: dict, context) -> dict:
 
 
 if __name__ == "__main__":
-    # Local CLI testing fallback
     os.environ["DRY_RUN"] = os.environ.get("DRY_RUN", "true")
-    # Simulate basic event
     response = main_handler({"dry_run": True}, None)
-    print("Execution output:")
     import pprint
-
     pprint.pprint(response)
