@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+data:
+  DRY_RUN: {{ .Values.config.dryRun | quote }}
+  ENVIRONMENT: {{ .Values.config.environment | quote }}
+  AWS_DEFAULT_REGION: {{ .Values.config.awsDefaultRegion | quote }}
+  AWS_REGIONS: {{ .Values.config.awsRegions | quote }}
+  S3_BUCKET_NAME: {{ .Values.config.s3BucketName | quote }}
+  SNS_TOPIC_ARN: {{ .Values.config.snsTopicArn | quote }}
+  SLACK_WEBHOOK_URL: {{ .Values.config.slackWebhookUrl | quote }}
+  EC2_CPU_THRESHOLD: {{ .Values.config.ec2CpuThreshold | quote }}
+  EC2_IDLE_HOURS: {{ .Values.config.ec2IdleHours | quote }}
+  RDS_CONNECTION_THRESHOLD: {{ .Values.config.rdsConnectionThreshold | quote }}
+  RDS_IDLE_HOURS: {{ .Values.config.rdsIdleHours | quote }}
+  DELETE_UNUSED_EBS: {{ .Values.config.deleteUnusedEbs | quote }}
+  RELEASE_UNUSED_EIP: {{ .Values.config.releaseUnusedEip | quote }}

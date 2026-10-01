@@ -1,0 +1,61 @@
+# Default values for aws-cost-optimizer.
+image:
+  repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/aws-cost-optimizer
+  pullPolicy: IfNotPresent
+  tag: "v1.0.0"
+
+cronjob:
+  schedule: "0 2 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  concurrencyPolicy: Forbid
+
+config:
+  dryRun: "true"
+  environment: "production"
+  awsDefaultRegion: "us-east-1"
+  awsRegions: "us-east-1,us-west-2"
+  s3BucketName: "aws-cost-optimization-reports"
+  snsTopicArn: ""
+  slackWebhookUrl: ""
+  ec2CpuThreshold: "5.0"
+  ec2IdleHours: "72"
+  rdsConnectionThreshold: "0"
+  rdsIdleHours: "48"
+  deleteUnusedEbs: "false"
+  releaseUnusedEip: "false"
+
+serviceAccount:
+  create: true
+  name: "cost-optimizer-sa"
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/cost-optimizer-irsa-role"
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
