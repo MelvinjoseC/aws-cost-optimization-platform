@@ -1,5 +1,6 @@
 import os
 from datetime import datetime, timezone
+from typing import Dict, List
 from botocore.exceptions import ClientError
 from src.utils.aws_client import get_aws_client
 from src.utils.logger import get_logger
@@ -7,9 +8,9 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def stop_rds_instances(rds_resources: list) -> list:
+def stop_rds_instances(rds_resources: List[Dict]) -> List[str]:
     """
-    Snapshots and stops a list of idle RDS DB instances.
+    Snapshots and stops a list of idle RDS DB instances across regions.
     Adds tracking tags: CostOptimizer=true and CostOptimizerStopTimestamp.
     Creates a snapshot before stopping: snapshot-<db-id>-<timestamp>.
     Respects DRY_RUN environment variable.
@@ -20,11 +21,9 @@ def stop_rds_instances(rds_resources: list) -> list:
         return []
 
     dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
-    rds_client = get_aws_client("rds")
-    stopped_dbs = []
+    default_region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+    stopped_dbs: List[str] = []
 
-    # RDS snapshot and tag timestamp formatting
-    # Note: RDS Snapshot identifier cannot contain colons or periods.
     timestamp_raw = datetime.now(timezone.utc)
     snapshot_suffix = timestamp_raw.strftime("%Y-%m-%d-%H-%M-%S")
     timestamp_iso = timestamp_raw.isoformat()
@@ -36,40 +35,40 @@ def stop_rds_instances(rds_resources: list) -> list:
 
     for rds in rds_resources:
         db_id = rds.get("resource_id")
-        arn = rds.get("details", {}).get("arn")
+        if not db_id:
+            continue
 
-        snapshot_id = f"snapshot-{db_id}-{snapshot_suffix}"
+        region = rds.get("details", {}).get("region", default_region)
+        arn = rds.get("details", {}).get("arn")
+        rds_client = get_aws_client("rds", region_name=region)
 
         # Max length of RDS snapshot identifier is 255 characters
-        snapshot_id = snapshot_id[:255]
+        snapshot_id = f"snapshot-{db_id}-{snapshot_suffix}"[:255]
 
         if dry_run:
             logger.info(
-                f"[DRY RUN] Would snapshot & stop RDS instance '{db_id}'. Snapshot Name: '{snapshot_id}'"
+                f"[DRY RUN] Would snapshot & stop RDS '{db_id}' in "
+                f"'{region}'. Snapshot: '{snapshot_id}'"
             )
-            if arn:
-                logger.info(
-                    f"[DRY RUN] Would apply tags to RDS resource '{arn}': {tags}"
-                )
+            stopped_dbs.append(db_id)
             continue
 
         logger.info(
-            f"Stopping RDS DB instance: {db_id}. Creating snapshot: {snapshot_id}"
+            f"Stopping RDS '{db_id}' in {region}. Snapshot: {snapshot_id}"
         )
 
         # 1. Apply tags to the RDS instance
         if arn:
             try:
                 rds_client.add_tags_to_resource(ResourceName=arn, Tags=tags)
-                logger.info(f"Successfully applied tags to RDS instance {db_id}")
+                logger.info(f"[{region}] Applied tags to RDS instance {db_id}")
             except ClientError as e:
                 logger.error(
-                    f"Failed to apply tags to RDS instance {db_id} (ARN: {arn}): {e}"
+                    f"[{region}] Failed to apply tags to RDS {db_id}: {e}"
                 )
-                # Continue with stopping even if tagging fails
         else:
             logger.warning(
-                f"No ARN found in details for RDS instance {db_id}. Tagging skipped."
+                f"[{region}] No ARN for RDS {db_id}. Skipping tagging."
             )
 
         # 2. Stop instance with snapshot
@@ -78,8 +77,8 @@ def stop_rds_instances(rds_resources: list) -> list:
                 DBInstanceIdentifier=db_id, DBSnapshotIdentifier=snapshot_id
             )
             stopped_dbs.append(db_id)
-            logger.info(f"Successfully triggered stop for RDS DB: {db_id}")
+            logger.info(f"[{region}] Successfully stopped RDS DB: {db_id}")
         except ClientError as e:
-            logger.error(f"Error stopping RDS DB {db_id}: {e}")
+            logger.error(f"[{region}] Error stopping RDS DB {db_id}: {e}")
 
     return stopped_dbs
