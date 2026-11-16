@@ -24,23 +24,27 @@ resource "aws_iam_policy" "lambda_policy" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      # CloudWatch Logging
+      # CloudWatch Logging and Log Retention Management
       {
         Effect = "Allow"
         Action = [
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
-          "logs:PutLogEvents"
+          "logs:PutLogEvents",
+          "logs:DescribeLogGroups",
+          "logs:PutRetentionPolicy",
+          "logs:ListTagsForResource"
         ]
         Resource = "arn:aws:logs:*:*:*"
       },
-      # CloudWatch Metrics Read
+      # CloudWatch Metrics Read and Publishing
       {
         Effect = "Allow"
         Action = [
           "cloudwatch:GetMetricStatistics",
           "cloudwatch:GetMetricData",
-          "cloudwatch:ListMetrics"
+          "cloudwatch:ListMetrics",
+          "cloudwatch:PutMetricData"
         ]
         Resource = "*"
       },
@@ -51,6 +55,9 @@ resource "aws_iam_policy" "lambda_policy" {
           "ec2:DescribeInstances",
           "ec2:DescribeVolumes",
           "ec2:DescribeAddresses",
+          "ec2:DescribeSnapshots",
+          "ec2:DescribeNatGateways",
+          "ec2:StartInstances",
           "ec2:StopInstances",
           "ec2:CreateTags",
           "ec2:DeleteVolume",
@@ -67,13 +74,46 @@ resource "aws_iam_policy" "lambda_policy" {
         ]
         Resource = "*"
       },
-      # RDS Scan, Stop, and Tag
+      # RDS Scan, Stop, Start, and Tag
       {
         Effect = "Allow"
         Action = [
           "rds:DescribeDBInstances",
+          "rds:StartDBInstance",
           "rds:StopDBInstance",
           "rds:AddTagsToResource"
+        ]
+        Resource = "*"
+      },
+      # DynamoDB Table Audit, Tagging, and On-Demand Conversion
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:ListTables",
+          "dynamodb:DescribeTable",
+          "dynamodb:ListTagsOfResource",
+          "dynamodb:UpdateTable",
+          "dynamodb:TagResource"
+        ]
+        Resource = "*"
+      },
+      # Amazon EFS File System Audit and Lifecycle Checks
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticfilesystem:DescribeFileSystems",
+          "elasticfilesystem:DescribeMountTargets",
+          "elasticfilesystem:DescribeLifecycleConfiguration",
+          "elasticfilesystem:DescribeTags"
+        ]
+        Resource = "*"
+      },
+      # ElastiCache Cluster Auditing
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticache:DescribeCacheClusters",
+          "elasticache:ListTagsForResource"
         ]
         Resource = "*"
       },

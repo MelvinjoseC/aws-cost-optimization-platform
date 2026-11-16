@@ -44,7 +44,28 @@ resource "aws_cloudwatch_dashboard" "finops_dashboard" {
         type   = "metric"
         x      = 0
         y      = 6
-        width  = 24
+        width  = 12
+        height = 6
+        properties = {
+          metrics = [
+            ["CostOptimization/Metrics", "SavingsByCategory", "Environment", var.environment, "ResourceType", "EC2", { stat = "Average", label = "EC2 ($/mo)" }],
+            ["CostOptimization/Metrics", "SavingsByCategory", "Environment", var.environment, "ResourceType", "RDS", { stat = "Average", label = "RDS ($/mo)" }],
+            ["CostOptimization/Metrics", "SavingsByCategory", "Environment", var.environment, "ResourceType", "EBS", { stat = "Average", label = "EBS ($/mo)" }],
+            ["CostOptimization/Metrics", "SavingsByCategory", "Environment", var.environment, "ResourceType", "DynamoDB", { stat = "Average", label = "DynamoDB ($/mo)" }],
+            ["CostOptimization/Metrics", "SavingsByCategory", "Environment", var.environment, "ResourceType", "EFS", { stat = "Average", label = "EFS ($/mo)" }],
+            ["CostOptimization/Metrics", "SavingsByCategory", "Environment", var.environment, "ResourceType", "CloudWatchLogs", { stat = "Average", label = "Logs ($/mo)" }]
+          ]
+          view    = "pie"
+          region  = var.aws_region
+          title   = "Monthly Savings Breakdown by Cloud Domain"
+          period  = 86400
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 6
+        width  = 12
         height = 6
         properties = {
           metrics = [
