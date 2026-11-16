@@ -36,20 +36,39 @@ from src.reports.generator import generate_reports
 __version__ = "2.5.0"
 logger = get_logger("cost-optimizer-cli")
 
-AVAILABLE_SERVICES = {
-    "ec2": [detect_idle_ec2_instances],
-    "rds": [detect_idle_rds_instances],
-    "ebs": [detect_unattached_ebs_volumes],
-    "eip": [detect_unused_eips],
-    "elb": [detect_idle_elb_instances],
-    "k8s": [detect_idle_k8s_deployments],
-    "snapshot": [detect_stale_ebs_snapshots],
-    "nat": [detect_idle_nat_gateways],
-    "elasticache": [detect_idle_elasticache_clusters],
-    "dynamodb": [detect_idle_dynamodb_tables],
-    "efs": [detect_idle_or_untiered_efs],
-    "logs": [detect_unexpired_or_abandoned_log_groups],
-}
+ALL_SERVICES = [
+    "ec2",
+    "rds",
+    "ebs",
+    "eip",
+    "elb",
+    "k8s",
+    "snapshot",
+    "nat",
+    "elasticache",
+    "dynamodb",
+    "efs",
+    "logs",
+]
+
+
+def get_service_detectors(service_name: str) -> List:
+    """Returns detector functions for a given service dynamically."""
+    mapping = {
+        "ec2": [detect_idle_ec2_instances],
+        "rds": [detect_idle_rds_instances],
+        "ebs": [detect_unattached_ebs_volumes],
+        "eip": [detect_unused_eips],
+        "elb": [detect_idle_elb_instances],
+        "k8s": [detect_idle_k8s_deployments],
+        "snapshot": [detect_stale_ebs_snapshots],
+        "nat": [detect_idle_nat_gateways],
+        "elasticache": [detect_idle_elasticache_clusters],
+        "dynamodb": [detect_idle_dynamodb_tables],
+        "efs": [detect_idle_or_untiered_efs],
+        "logs": [detect_unexpired_or_abandoned_log_groups],
+    }
+    return mapping.get(service_name.lower(), [])
 
 
 def print_ascii_table(resources: List[dict]):
@@ -195,13 +214,14 @@ def main(argv: List[str] = None):
     if args.services:
         requested = [s.strip().lower() for s in args.services.split(",") if s.strip()]
         for req in requested:
-            if req in AVAILABLE_SERVICES:
-                detectors.extend(AVAILABLE_SERVICES[req])
+            funcs = get_service_detectors(req)
+            if funcs:
+                detectors.extend(funcs)
             else:
                 logger.warning(f"Unknown service '{req}' specified.")
     else:
-        for funcs in AVAILABLE_SERVICES.values():
-            detectors.extend(funcs)
+        for s in ALL_SERVICES:
+            detectors.extend(get_service_detectors(s))
 
     if args.include_rightsizing:
         detectors.extend([
