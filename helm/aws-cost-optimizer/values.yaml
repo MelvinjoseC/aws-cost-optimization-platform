@@ -2,7 +2,7 @@
 image:
   repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/aws-cost-optimizer
   pullPolicy: IfNotPresent
-  tag: "v1.0.0"
+  tag: "v2.5.0"
 
 cronjob:
   schedule: "0 2 * * *"
@@ -24,12 +24,18 @@ config:
   rdsIdleHours: "48"
   deleteUnusedEbs: "false"
   releaseUnusedEip: "false"
+  dynamodbIdleDays: "14"
+  efsIdleDays: "14"
+  cloudwatchLogRetentionDays: "90"
 
 serviceAccount:
   create: true
   name: "cost-optimizer-sa"
   annotations:
     eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/cost-optimizer-irsa-role"
+
+networkPolicy:
+  enabled: true
 
 securityContext:
   runAsNonRoot: true
@@ -50,8 +56,8 @@ containerSecurityContext:
 
 resources:
   limits:
-    cpu: 200m
-    memory: 256Mi
+    cpu: 300m
+    memory: 384Mi
   requests:
     cpu: 100m
     memory: 128Mi
