@@ -32,9 +32,12 @@ The **AWS Cost Optimization Platform** is an enterprise-grade, bidirectional Fin
       |-- Unattached EBS Volumes      |   (prod/live) |-- K8s Scale Down/Up   |-- FinOps
       |-- Unassociated Elastic IPs    |-- Tag Checks  |-- EBS Delete          |   Dashboard
       |-- Idle Classic & App ELBs     |   (OptOut/    |-- EIP Release         |-- S3 Reports
-      |-- Stale EBS Snapshots         |    DoNotStop) |                       |   (HTML/JSON/CSV)
-      |-- Idle NAT Gateways           |               |                       |-- Slack & SNS
+      |-- Stale EBS Snapshots         |    DoNotStop) |-- DynamoDB On-Demand  |   (HTML/JSON/CSV)
+      |-- Idle NAT Gateways           |               |-- Log Retention Enforce|-- Slack & SNS
       |-- Idle ElastiCache Nodes      |               |                       |   Alerts
+      |-- Idle DynamoDB Tables        |               |                       |
+      |-- Untiered Amazon EFS         |               |                       |
+      |-- CloudWatch Log Groups       |               |                       |
       |-- K8s Deployments / Pods      |               |                       |
 ```
 
@@ -51,11 +54,16 @@ The **AWS Cost Optimization Platform** is an enterprise-grade, bidirectional Fin
 * **Unassociated Elastic IPs**: Finds unattached public IPv4 addresses incurring hourly idle charges.
 * **Idle NAT Gateways**: Identifies VPC NAT Gateways with 0 active connections over 7 days (~$32.40/mo per gateway).
 * **Idle ElastiCache**: Scans Redis and Memcached clusters with 0 client connections over 72 hours.
+* **Idle DynamoDB Tables**: Detects provisioned tables with zero read/write capacity consumed over 14 days.
+* **Untiered Amazon EFS**: Identifies unmounted file systems and storage lacking Infrequent Access (IA) lifecycle policies.
+* **CloudWatch Log Groups**: Flags log groups with infinite (Never Expire) retention or abandoned ingestion.
 * **Idle Load Balancers**: Flags ALBs and Classic ELBs with 0 requests over 7 days.
 * **Kubernetes Workloads**: Detects idle deployments via HPA metrics and flags pods with disproportionate CPU/Memory requests.
 
 ### 2. Bidirectional Remediation & Restoration
 * **Stateful Stopping**: Stops idle EC2 instances and creates a timestamped safety snapshot before stopping RDS DBs.
+* **DynamoDB Billing Conversion**: Safely switches idle provisioned tables to Pay-Per-Request (On-Demand) billing.
+* **Log Retention Enforcement**: Automatically applies compliant 90-day retention policies to unexpired log groups.
 * **Kubernetes Scale-to-Zero**: Saves original replica counts to annotation `cost-optimizer/original-replicas` before scaling down.
 * **Automated Morning Restoration**: Built-in `restore` mode automatically restarts stopped instances and scales deployments back up before working hours.
 
@@ -80,6 +88,15 @@ The platform includes a first-class CLI (`cli.py`) for local audits, CI/CD pipel
 # Audit idle resources across multiple regions (Dry-Run preview)
 python cli.py --action scan --regions us-east-1,us-west-2
 
+# Filter specific services (e.g., ec2, rds, dynamodb, efs, logs)
+python cli.py --action scan --services ec2,dynamodb,efs --format json
+
+# Export audit results to CSV file
+python cli.py --action scan --format csv --output-file audit-results.csv
+
+# Run scan with rightsizing recommendations
+python cli.py --action scan --include-rightsizing
+
 # Perform active remediation (stop/delete non-production resources)
 python cli.py --action remediate --no-dry-run --regions us-east-1
 
@@ -99,6 +116,9 @@ python cli.py --action restore
 | `AWS_REGIONS` | `us-east-1` | Comma-separated list of target AWS regions to audit |
 | `DELETE_UNUSED_EBS` | `false` | Actively deletes unattached EBS volumes when DRY_RUN=false |
 | `RELEASE_UNUSED_EIP` | `false` | Actively releases unassociated Elastic IPs when DRY_RUN=false |
+| `DYNAMODB_IDLE_DAYS` | `14` | Days of zero consumed capacity before DynamoDB table is flagged |
+| `EFS_IDLE_DAYS` | `14` | Days of zero I/O consumed before EFS file system is flagged |
+| `CLOUDWATCH_LOG_RETENTION_DAYS` | `90` | Default retention period enforced on unexpired log groups |
 | `SNAPSHOT_MAX_AGE_DAYS` | `30` | Minimum age (days) before orphaned EBS snapshots are flagged |
 | `NAT_GW_IDLE_HOURS` | `168` | Window in hours to verify 0 connections for NAT Gateways |
 | `ELASTICACHE_IDLE_HOURS` | `72` | Window in hours to verify 0 connections for ElastiCache |
@@ -125,7 +145,7 @@ terraform apply -var="s3_bucket_name=my-company-finops-reports" -auto-approve
 
 ### 2. Kubernetes Helm Deployment
 
-Deploy the Kubernetes CronJob and RBAC permissions using Helm:
+Deploy the Kubernetes CronJob, NetworkPolicy, and RBAC permissions using Helm:
 
 ```bash
 helm install aws-cost-optimizer ./helm/aws-cost-optimizer \
@@ -144,6 +164,9 @@ Run the full automated test suite with unit tests and mocks:
 ```bash
 # Run all unit tests
 python -m pytest
+
+# Run with coverage report
+python -m pytest --cov=src --cov-report=term-missing
 
 # Run flake8 lint check
 python -m flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
