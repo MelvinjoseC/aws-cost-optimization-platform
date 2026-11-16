@@ -1,11 +1,11 @@
 from botocore.exceptions import ClientError
 from src.utils.aws_client import get_aws_client, get_target_regions
 from src.utils.logger import get_logger
+from src.utils.pricing import calculate_eip_monthly_savings
 
 logger = get_logger(__name__)
 
-# Standard AWS idle Elastic IP price: $0.005/hour -> $3.60/month
-EIP_MONTHLY_PRICE = 3.60
+EIP_MONTHLY_PRICE = calculate_eip_monthly_savings()
 
 
 def detect_unused_eips() -> list:
@@ -46,31 +46,31 @@ def detect_unused_eips() -> list:
                     name = tag_dict.get("Name", "Unnamed")
 
                     logger.info(
-                        f"[{region}] Detected Unused Elastic IP: IP={public_ip}, AllocationId={allocation_id}, "
-                        f"Name={name}, Estimated Savings=${EIP_MONTHLY_PRICE}/mo"
+                        f"[{region}] Detected Unused Elastic IP: IP={public_ip}, "
+                        f"AllocationId={allocation_id}, Name={name}, "
+                        f"Estimated Savings=${EIP_MONTHLY_PRICE}/mo"
                     )
 
                     unused_eips.append(
                         {
-                            "resource_id": allocation_id,  # use allocation_id for deletion/referencing
+                            "resource_id": allocation_id,
                             "resource_type": "EIP",
                             "name": name,
                             "details": {
                                 "region": region,
                                 "public_ip": public_ip,
-                                "domain": addr.get("Domain"),
                             },
+                            "tags": tag_dict,
                             "estimated_monthly_savings": EIP_MONTHLY_PRICE,
-                            "opt_out_tag": False,
                         }
                     )
 
         except ClientError as e:
-            logger.error(f"Error describing Elastic IPs in region {region}: {e}")
-            # Continue scanning other regions even if one fails
-            continue
+            logger.error(
+                f"Failed to describe Elastic IPs in region {region}: {e}"
+            )
 
     logger.info(
-        f"EIP scanning completed. Found {len(unused_eips)} unused Elastic IPs across all targeted regions."
+        f"Completed Elastic IP detection. Found {len(unused_eips)} unused addresses."
     )
     return unused_eips

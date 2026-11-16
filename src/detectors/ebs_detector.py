@@ -1,11 +1,11 @@
 from botocore.exceptions import ClientError
 from src.utils.aws_client import get_aws_client, get_target_regions
 from src.utils.logger import get_logger
+from src.utils.pricing import EBS_MONTHLY_PER_GB, calculate_ebs_savings
 
 logger = get_logger(__name__)
 
-# standard EBS GP3 storage price per GB-month in us-east-1
-EBS_GB_MONTHLY_PRICE = 0.08
+EBS_GB_MONTHLY_PRICE = EBS_MONTHLY_PER_GB["gp3"]
 
 
 def detect_unattached_ebs_volumes() -> list:
@@ -34,7 +34,7 @@ def detect_unattached_ebs_volumes() -> list:
                 for volume in page.get("Volumes", []):
                     volume_id = volume.get("VolumeId")
                     size_gb = volume.get("Size")
-                    volume_type = volume.get("VolumeType")
+                    volume_type = volume.get("VolumeType", "gp3")
                     tags = volume.get("Tags", [])
 
                     tag_dict = {tag["Key"]: tag["Value"] for tag in tags}
@@ -47,8 +47,8 @@ def detect_unattached_ebs_volumes() -> list:
 
                     name = tag_dict.get("Name", "Unnamed")
 
-                    # Monthly savings calculation: GB * price per GB
-                    monthly_savings = round(size_gb * EBS_GB_MONTHLY_PRICE, 2)
+                    # Monthly savings calculation using centralized pricing engine
+                    monthly_savings = calculate_ebs_savings(size_gb, volume_type)
 
                     logger.info(
                         f"[{region}] Detected Unattached EBS Volume: ID={volume_id}, Name={name}, "
@@ -64,19 +64,18 @@ def detect_unattached_ebs_volumes() -> list:
                                 "region": region,
                                 "size_gb": size_gb,
                                 "volume_type": volume_type,
-                                "create_time": volume.get("CreateTime").isoformat(),
                             },
+                            "tags": tag_dict,
                             "estimated_monthly_savings": monthly_savings,
-                            "opt_out_tag": False,
                         }
                     )
 
         except ClientError as e:
-            logger.error(f"Error describing EBS volumes in region {region}: {e}")
-            # Continue scanning other regions even if one fails
-            continue
+            logger.error(
+                f"Failed to describe EBS volumes in region {region}: {e}"
+            )
 
     logger.info(
-        f"EBS scanning completed. Found {len(unattached_volumes)} unattached volumes across all targeted regions."
+        f"Completed EBS detection. Found {len(unattached_volumes)} unattached volumes."
     )
     return unattached_volumes
