@@ -11,30 +11,24 @@ from src.utils.governance import filter_actionable_resources  # noqa: E402
 from src.utils.metrics_publisher import publish_finops_metrics  # noqa: E402
 from src.detectors.ec2_detector import detect_idle_ec2_instances  # noqa: E402
 from src.detectors.rds_detector import detect_idle_rds_instances  # noqa: E402
-from src.detectors.ebs_detector import (  # noqa: E402
-    detect_unattached_ebs_volumes,
-)
+from src.detectors.ebs_detector import detect_unattached_ebs_volumes  # noqa: E402
 from src.detectors.eip_detector import detect_unused_eips  # noqa: E402
-from src.detectors.k8s_detector import (  # noqa: E402
-    detect_idle_k8s_deployments,
-)
+from src.detectors.k8s_detector import detect_idle_k8s_deployments  # noqa: E402
 from src.detectors.elb_detector import detect_idle_elb_instances  # noqa: E402
-from src.detectors.snapshot_detector import (  # noqa: E402
-    detect_stale_ebs_snapshots,
-)
-from src.detectors.nat_gateway_detector import (  # noqa: E402
-    detect_idle_nat_gateways,
-)
-from src.detectors.elasticache_detector import (  # noqa: E402
-    detect_idle_elasticache_clusters,
-)
+from src.detectors.snapshot_detector import detect_stale_ebs_snapshots  # noqa: E402
+from src.detectors.nat_gateway_detector import detect_idle_nat_gateways  # noqa: E402
+from src.detectors.elasticache_detector import detect_idle_elasticache_clusters  # noqa: E402
+from src.detectors.dynamodb_detector import detect_idle_dynamodb_tables  # noqa: E402
+from src.detectors.efs_detector import detect_idle_or_untiered_efs  # noqa: E402
+from src.detectors.cloudwatch_logs_detector import detect_unexpired_or_abandoned_log_groups  # noqa: E402
+
 from src.actions.stop_ec2 import stop_ec2_instances  # noqa: E402
 from src.actions.stop_rds import stop_rds_instances  # noqa: E402
 from src.actions.scale_down import scale_down_k8s_deployments  # noqa: E402
-from src.actions.delete_ebs import (  # noqa: E402
-    delete_unattached_ebs_volumes,
-)
+from src.actions.delete_ebs import delete_unattached_ebs_volumes  # noqa: E402
 from src.actions.release_eip import release_unused_eips  # noqa: E402
+from src.actions.convert_dynamodb import convert_dynamodb_to_ondemand  # noqa: E402
+from src.actions.enforce_log_retention import enforce_cloudwatch_log_retention  # noqa: E402
 from src.actions.restore_ec2 import restore_ec2_instances  # noqa: E402
 from src.actions.restore_rds import restore_rds_instances  # noqa: E402
 from src.actions.restore_k8s import restore_k8s_deployments  # noqa: E402
@@ -92,7 +86,7 @@ def main_handler(event: dict, context) -> dict:
     os.environ["DRY_RUN"] = str(dry_run).lower()
     logger.info(f"Execution mode configured: DRY_RUN={dry_run}")
 
-    # 2. Run Resource Detectors
+    # 2. Run Resource Detectors across all supported FinOps domains
     all_detected_resources = []
     scanners = [
         ("EC2", detect_idle_ec2_instances),
@@ -104,6 +98,9 @@ def main_handler(event: dict, context) -> dict:
         ("Snapshot", detect_stale_ebs_snapshots),
         ("NATGateway", detect_idle_nat_gateways),
         ("ElastiCache", detect_idle_elasticache_clusters),
+        ("DynamoDB", detect_idle_dynamodb_tables),
+        ("EFS", detect_idle_or_untiered_efs),
+        ("CloudWatchLogs", detect_unexpired_or_abandoned_log_groups),
     ]
 
     for service_name, scanner_fn in scanners:
@@ -129,6 +126,8 @@ def main_handler(event: dict, context) -> dict:
     remediated_k8s = []
     remediated_ebs = []
     remediated_eip = []
+    remediated_ddb = []
+    remediated_logs = []
 
     if not dry_run:
         logger.info("Executing active remediation actions...")
@@ -169,6 +168,18 @@ def main_handler(event: dict, context) -> dict:
         ]
         if release_eip_flag and eip_to_rel:
             remediated_eip = release_unused_eips(eip_to_rel)
+
+        ddb_to_convert = [
+            r for r in actionable_resources if r["resource_type"] == "DynamoDB"
+        ]
+        if ddb_to_convert:
+            remediated_ddb = convert_dynamodb_to_ondemand(ddb_to_convert)
+
+        logs_to_remediate = [
+            r for r in actionable_resources if r["resource_type"] == "CloudWatchLogs"
+        ]
+        if logs_to_remediate:
+            remediated_logs = enforce_cloudwatch_log_retention(logs_to_remediate)
     else:
         logger.info("Dry-run mode is active. No remediation executed.")
 
@@ -188,6 +199,8 @@ def main_handler(event: dict, context) -> dict:
         "k8s": len(remediated_k8s),
         "ebs": len(remediated_ebs),
         "eip": len(remediated_eip),
+        "dynamodb": len(remediated_ddb),
+        "cloudwatch_logs": len(remediated_logs),
     }
     publish_finops_metrics(
         detected_resources=all_detected_resources,
@@ -223,6 +236,8 @@ def main_handler(event: dict, context) -> dict:
                 "kubernetes_deployments": remediated_k8s,
                 "ebs_volumes": remediated_ebs,
                 "elastic_ips": remediated_eip,
+                "dynamodb_tables": remediated_ddb,
+                "cloudwatch_logs": remediated_logs,
             },
             "s3_html_report": report_summary.get("s3_html_url"),
             "s3_json_report": report_summary.get("s3_json_url"),
